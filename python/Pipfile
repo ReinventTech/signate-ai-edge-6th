@@ -1,0 +1,22 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+tensorflow-gpu = "*"
+numpy = "*"
+numpy-quaternion = "*"
+tensorflow-addons = "*"
+opencv-python = "*"
+scikit-image = "*"
+
+[dev-packages]
+flake8 = "*"
+pandas = "*"
+nuscenes-devkit = "*"
+tensorboard = "*"
+tensorboard-plugin-profile = "*"
+
+[requires]
+python_version = "3.10"
