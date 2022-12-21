@@ -1,0 +1,66 @@
+# Python project for training baseline models
+
+## Setup
+
+```bash
+# For pip users
+pip install -r requirements.txt
+
+# For pipenv users
+pipenv install
+pipenv shell
+```
+
+## Prepare a dataset for 6th SIGNATE AI Edge Contest
+
+1. Download the contest data files from the contest page and extract them under /path/to/signate_data, merging "train\*" into "train" directory.
+
+2. Create a dataset from the downloaded LiDAR data and labels.
+
+```bash
+# The dataset will be created under /path/to/signate_data/train/3d_labels/signate
+python src/dataset.py create --root /path/to/signate_data/train/3d_labels
+```
+
+## Train a Bird's-Eye-View model
+
+```bash
+python src/train.py --path /path/to/signate_data/train/3d_labels
+
+# Run a TensorBoard if necessary
+tensorboard --logdir tb_logs
+```
+
+## Convert a training checkpoint to a TensorFlow saved model
+
+```bash
+python src/convert_bev_to_saved_model.py --ckpt checkpoints/bev.ckpt --output /path/to/bev_saved_model
+
+# Update the saved model if necessary
+cp -r /path/to/bev_saved_model models/bev_model
+```
+
+## Prepare a Point-Painting-like model (Optional)
+
+```bash
+git clone https://github.com/google-research/deeplab2.git
+cd deeplab2
+git clone https://github.com/tensorflow/models.git
+export PYTHONPATH=$PYTHONPATH:`pwd`
+export PYTHONPATH=$PYTHONPATH:`pwd`/models
+# Choose another model/checkpoint/config if necessary
+python export_model.py --experiment_option_path=configs/cityscapes/axial_deeplab/max_deeplab_s_backbone_os16.textproto --checkpoint_path=max_deeplab_s_backbone_os16_axial_deeplab_cityscapes_trainfine/ckpt-60000 --output_path=/path/to/pp_model
+
+# Update the model if necessary
+cp -r /path/to/pp_model /project_root/python/models/pp_model
+```
+
+## Make predictions for the contest
+
+```bash
+mkdir tmp
+# Modify the scenes list in make_meta.py if necessary
+python scripts/make_meta.py --data-dir /path/to/signate_data/train/3d_labels --output-path tmp
+python scripts/run.py --exec-path src --test-meta-path tmp/meta_data.json --test-data-dir /path/to/signate_data/train/3d_labels --result-path tmp/result.json 2>/dev/null
+python scripts/evaluate.py --ground-truth-path tmp/ans.json --predictions-path tmp/result.json
+```
