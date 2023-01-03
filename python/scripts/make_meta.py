@@ -138,37 +138,37 @@ def main():
     # set scene names for validation
     test_scene_names = [
         # "scene-0001",  # 2, 12 x3
-        # # "scene-0043", #
+        # "scene-0043",  # 0, 8 x6
         # "scene-0004",  # 4, 20 x6
         # "scene-0005",  # 2, 39 x13
         # "scene-0008",  # 5, 20 x3
-        # # "scene-0007" #
+        # "scene-0007"  # 0, 23 x5
         # "scene-0009",  # 10, 79 x15
-        # # "scene-0010" #
-        # "scene-0011",
-        # "scene-0020",  # 14, 123 x29  # 171, 129 x27
+        # "scene-0010"  # 0, 9 x7
+        # "scene-0011",  # 14, 123 x29
+        # "scene-0020",  # 171, 129 x27
         # "scene-0021",  # 3, 41 x8
-        # # "scene-0022" #
-        # "scene-0024",
+        # "scene-0022"  # 0, 11 x2
+        # "scene-0024", # 2, 8 x7
         # "scene-0025",  # 2, 8 x7  # 5, 31 x22
         # # "scene-0026"  # 3, 4 x63
         # "scene-0027",  # 12, 15 x7
-        # "scene-0028" #
-        # "scene-0029"  #
-        # "scene-0030"  #
+        # "scene-0028"  # 0, 5 x7
+        # "scene-0029"  # 0, 36 x15
+        # "scene-0030"  # 0, 7 x13
         # "scene-0031"  # 2, 15 x16
-        # "scene-0032"  #
-        # "scene-0033"  #
+        # "scene-0032"  # 0, 14 x15
+        # "scene-0033"  # 0, 12 x7
         # "scene-0034"  # 3, 8 x15
-        # "scene-0041" #
-        # "scene-0042" #
-        # "scene-0045"  #
+        # "scene-0041"  # 0, 6 x20
+        # "scene-0042"  # 0, 10 x15
+        # "scene-0045"  # 0, 48 x149
         # "scene-0048"  # 1043, 600 x153
-        # "scene-0049" # skip
-        # "scene-0050" # skip
-        # "scene-0051"  #
-        # "scene-0054" #
-        # "scene-0058"  # skip
+        # "scene-0049"  # 59, 957 x523
+        # "scene-0050"  # 0, 178 x349
+        # "scene-0051"  # 0, 4374 x179
+        # "scene-0054"  # 0, 308 x64
+        # "scene-0058"  # 0, 334 x498
         "scene-0109"  # 1004, 3633 x183
     ]  # list of scenes for validation
 
@@ -184,6 +184,14 @@ def main():
     # make meta data and ground truth
     nusc = NuScenes(version="v1.0-trainval", dataroot=data_dir, verbose=True)
     meta_data, annotations = make_test(nusc, test_scene_names, category_names)
+    n_pedestrian = 0
+    n_vehicle = 0
+    for ann in annotations.values():
+        if "pedestrian" in ann.keys():
+            n_pedestrian += len(ann["pedestrian"])
+        if "vehicle" in ann.keys():
+            n_vehicle += len(ann["vehicle"])
+    print(n_pedestrian, n_vehicle)
     with open(meta_data_path, "w", encoding="utf-8") as f:
         json.dump(meta_data, f)
     with open(annotations_path, "w", encoding="utf-8") as f:

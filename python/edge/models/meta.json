@@ -1,0 +1,8 @@
+{
+    "lib": "libvart-dpu-runner.so",
+    "filename": "bev.xmodel",
+    "kernel": [
+        "subgraph_quant_add"
+    ],
+    "target": "DPUCZDX8G_ISA1_B3136"
+}

@@ -100,7 +100,7 @@ def init_sample_annotation(root):
             )
 
 
-def create_dataset(root=".", split=True):
+def create_dataset(root=".", train=True, split=True):
     init_sample_data(root)
     init_scenes(root)
     init_ego_pose(root)
@@ -108,7 +108,7 @@ def create_dataset(root=".", split=True):
     init_sample_annotation(root)
     dataset = []
     for token, scene in token_to_scene.items():
-        if split:
+        if train:
             if scene["name"] in [
                 "scene-0109",
             ]:
@@ -163,8 +163,20 @@ def create_dataset(root=".", split=True):
             }
             scene_dataset.append(data)
         dataset.append(scene_dataset)
+    for scene_idx, scene_data in enumerate(dataset):
+        for frame_idx, data in enumerate(scene_data):
+            print(scene_idx, data["image_path"])
+            break
 
-    relative_dir = "signate/train" if split else "signate/test"
+    exit()
+
+    relative_dir = (
+        ("signate3/train" if split else "signate3/calib2")
+        if train
+        else "signate3/test"
+        if split
+        else "signate3/calib"
+    )
     dataset_dir = os.path.join(root, relative_dir)
     if not os.path.exists(dataset_dir):
         os.makedirs(dataset_dir)
@@ -174,6 +186,7 @@ def create_dataset(root=".", split=True):
         options=tf.io.TFRecordOptions(compression_type="GZIP"),
     ) as writer:
         for scene_idx, scene_data in enumerate(dataset):
+            # n_frames = len(scene_data)
             for frame_idx, data in enumerate(scene_data):
                 tag = f"{scene_idx}_{frame_idx}"
                 lidar_points = np.array(
@@ -208,11 +221,11 @@ def create_dataset(root=".", split=True):
                         (bb_xyz, bb_sxyz, bb_rxyz, np.array([category]))
                     )
                     bbs.append(bb)
-                lidar_image = np.zeros((1152, 1152, 40))
+                lidar_image = np.zeros((1152, 1152, 60))
 
                 lidar_points[:, 0] = np.round((lidar_points[:, 0] + 57.6) * 10)
                 lidar_points[:, 1] = np.round((-lidar_points[:, 1] + 57.6) * 10)
-                lidar_points[:, 2] = np.round((lidar_points[:, 2] + 2.5) * 10)
+                lidar_points[:, 2] = np.round((lidar_points[:, 2] + 4.0) * 10)
                 indices = np.logical_and.reduce(
                     (
                         lidar_points[:, 0] >= 0,
@@ -220,7 +233,7 @@ def create_dataset(root=".", split=True):
                         lidar_points[:, 1] >= 0,
                         lidar_points[:, 1] < 1152,
                         lidar_points[:, 2] >= 0,
-                        lidar_points[:, 2] < 40,
+                        lidar_points[:, 2] < 60,
                     )
                 )
                 lidar_points = lidar_points[indices]
@@ -333,12 +346,12 @@ def create_dataset(root=".", split=True):
                         os.path.join(root, lidar_proj_image_paths[a]),
                         lidar_proj_image[a],
                     )
-                lidar_proj_image_paths_bytes = [
-                    bytes(p, "utf-8") for p in lidar_proj_image_paths
-                ]
-                camera_image_path_bytes = bytes(data["image_path"], "utf-8")
+                # lidar_proj_image_paths_bytes = [
+                # bytes(p, "utf-8") for p in lidar_proj_image_paths
+                # ]
+                # camera_image_path_bytes = bytes(data["image_path"], "utf-8")
 
-                if split or True:
+                if split:
                     for dy in [0, 320, 640]:
                         for dx in [0, 320, 640]:
                             split_tag = f"{tag}_{dy}_{dx}"
@@ -413,6 +426,11 @@ def create_dataset(root=".", split=True):
                             record = tf.train.Example(
                                 features=tf.train.Features(
                                     feature={
+                                        "scene_idx": tf.train.Feature(
+                                            int64_list=tf.train.Int64List(
+                                                value=[scene_idx]
+                                            )
+                                        ),
                                         "lidar_gzip_path": tf.train.Feature(
                                             bytes_list=tf.train.BytesList(
                                                 value=[lidar_gzip_path]
@@ -433,63 +451,130 @@ def create_dataset(root=".", split=True):
                                                 value=[orientation_lsb_bytes]
                                             )
                                         ),
-                                        "lidar_proj_image_0_path": tf.train.Feature(
-                                            bytes_list=tf.train.BytesList(
-                                                value=[lidar_proj_image_paths_bytes[0]]
-                                            )
-                                        ),
-                                        "lidar_proj_image_90_path": tf.train.Feature(
-                                            bytes_list=tf.train.BytesList(
-                                                value=[lidar_proj_image_paths_bytes[1]]
-                                            )
-                                        ),
-                                        "lidar_proj_image_180_path": tf.train.Feature(
-                                            bytes_list=tf.train.BytesList(
-                                                value=[lidar_proj_image_paths_bytes[2]]
-                                            )
-                                        ),
-                                        "lidar_proj_image_270_path": tf.train.Feature(
-                                            bytes_list=tf.train.BytesList(
-                                                value=[lidar_proj_image_paths_bytes[3]]
-                                            )
-                                        ),
-                                        "camera_image_path": tf.train.Feature(
-                                            bytes_list=tf.train.BytesList(
-                                                value=[camera_image_path_bytes]
-                                            )
-                                        ),
+                                        # "lidar_proj_image_0_path": tf.train.Feature(
+                                        # bytes_list=tf.train.BytesList(
+                                        # value=[lidar_proj_image_paths_bytes[0]]
+                                        # )
+                                        # ),
+                                        # "lidar_proj_image_90_path": tf.train.Feature(
+                                        # bytes_list=tf.train.BytesList(
+                                        # value=[lidar_proj_image_paths_bytes[1]]
+                                        # )
+                                        # ),
+                                        # "lidar_proj_image_180_path": tf.train.Feature(
+                                        # bytes_list=tf.train.BytesList(
+                                        # value=[lidar_proj_image_paths_bytes[2]]
+                                        # )
+                                        # ),
+                                        # "lidar_proj_image_270_path": tf.train.Feature(
+                                        # bytes_list=tf.train.BytesList(
+                                        # value=[lidar_proj_image_paths_bytes[3]]
+                                        # )
+                                        # ),
+                                        # "camera_image_path": tf.train.Feature(
+                                        # bytes_list=tf.train.BytesList(
+                                        # value=[camera_image_path_bytes]
+                                        # )
+                                        # ),
                                     }
                                 )
                             ).SerializeToString()
                             writer.write(record)
                 else:
-                    orientation_bytes = orientation_image.tobytes()
-                    lidar_bytes = lidar_image.tobytes()
-                    bbs_bytes = bbs.tobytes()
+                    split_tag = tag
+                    split_lidar_image = lidar_image
+                    split_bbs = bbs
+                    if split_bbs.shape[0] == 0 or np.all(split_lidar_image == 0):
+                        continue
+
+                    split_orientation_image = orientation_image.copy()
+                    split_orientation_image[:, :, 0] = np.minimum(
+                        np.round(split_orientation_image[:, :, 0] * 65535),
+                        65535,
+                    )
+                    split_orientation_image = split_orientation_image.astype(np.uint16)
+                    split_orientation_image_msb = (
+                        split_orientation_image // 256
+                    ).astype(np.uint8)
+                    split_orientation_image_lsb = (
+                        split_orientation_image % 256
+                    ).astype(np.uint8)
+                    split_orientation_image_msb_path = (
+                        f"{relative_dir}/{split_tag}_orientation_msb.png"
+                    )
+                    split_orientation_image_lsb_path = (
+                        f"{relative_dir}/{split_tag}_orientation_lsb.png"
+                    )
+                    cv2.imwrite(
+                        os.path.join(root, split_orientation_image_msb_path),
+                        split_orientation_image_msb,
+                    )
+                    cv2.imwrite(
+                        os.path.join(root, split_orientation_image_lsb_path),
+                        split_orientation_image_lsb,
+                    )
+                    orientation_msb_bytes = bytes(
+                        split_orientation_image_msb_path, "utf-8"
+                    )
+                    orientation_lsb_bytes = bytes(
+                        split_orientation_image_lsb_path, "utf-8"
+                    )
+                    lidar_bytes = split_lidar_image.tobytes()
+                    lidar_gzip = gzip.compress(lidar_bytes)
+                    lidar_gzip_path = f"{relative_dir}/{split_tag}_lidar_image.gzip"
+                    with open(os.path.join(root, lidar_gzip_path), "wb") as f:
+                        f.write(lidar_gzip)
+                    bbs_bytes = split_bbs.tobytes()
+                    lidar_gzip_path = bytes(lidar_gzip_path, "utf-8")
                     record = tf.train.Example(
                         features=tf.train.Features(
                             feature={
-                                "lidar": tf.train.Feature(
-                                    bytes_list=tf.train.BytesList(value=[lidar_bytes])
+                                "scene_idx": tf.train.Feature(
+                                    int64_list=tf.train.Int64List(value=[scene_idx])
+                                ),
+                                "lidar_gzip_path": tf.train.Feature(
+                                    bytes_list=tf.train.BytesList(
+                                        value=[lidar_gzip_path]
+                                    )
                                 ),
                                 "bbs": tf.train.Feature(
                                     bytes_list=tf.train.BytesList(value=[bbs_bytes])
                                 ),
-                                "orientations": tf.train.Feature(
+                                "orientation_msb_path": tf.train.Feature(
                                     bytes_list=tf.train.BytesList(
-                                        value=[orientation_bytes]
+                                        value=[orientation_msb_bytes]
                                     )
                                 ),
-                                "lidar_proj_image_paths": tf.train.Feature(
+                                "orientation_lsb_path": tf.train.Feature(
                                     bytes_list=tf.train.BytesList(
-                                        value=[lidar_proj_image_paths_bytes]
+                                        value=[orientation_lsb_bytes]
                                     )
                                 ),
-                                "camera_image_path": tf.train.Feature(
-                                    bytes_list=tf.train.BytesList(
-                                        value=[camera_image_path_bytes]
-                                    )
-                                ),
+                                # "lidar_proj_image_0_path": tf.train.Feature(
+                                # bytes_list=tf.train.BytesList(
+                                # value=[lidar_proj_image_paths_bytes[0]]
+                                # )
+                                # ),
+                                # "lidar_proj_image_90_path": tf.train.Feature(
+                                # bytes_list=tf.train.BytesList(
+                                # value=[lidar_proj_image_paths_bytes[1]]
+                                # )
+                                # ),
+                                # "lidar_proj_image_180_path": tf.train.Feature(
+                                # bytes_list=tf.train.BytesList(
+                                # value=[lidar_proj_image_paths_bytes[2]]
+                                # )
+                                # ),
+                                # "lidar_proj_image_270_path": tf.train.Feature(
+                                # bytes_list=tf.train.BytesList(
+                                # value=[lidar_proj_image_paths_bytes[3]]
+                                # )
+                                # ),
+                                # "camera_image_path": tf.train.Feature(
+                                # bytes_list=tf.train.BytesList(
+                                # value=[camera_image_path_bytes]
+                                # )
+                                # ),
                             }
                         )
                     ).SerializeToString()
@@ -497,12 +582,19 @@ def create_dataset(root=".", split=True):
             print(f"scene #{scene_idx} completed")
 
 
-def get_dataset(root=".", split=True):
+def get_dataset(root=".", train=True, split=True):
     dataset_path = os.path.join(
         root,
-        "signate/train/signate.tfrecords"
-        if split
-        else "signate/test/signate.tfrecords",
+        (
+            "signate2/train/signate.tfrecords"
+            # "signate_train_with_front6/signate.tfrecords"
+            if split
+            else "signate2/calib2/signate.tfrecords"
+        )
+        if train
+        else "signate2/test/signate.tfrecords"
+        # else "signate_test_with_front6/signate.tfrecords"
+        if split else "signate2/calib/signate.tfrecords",
     )
     return tf.data.TFRecordDataset(dataset_path, compression_type="GZIP")
 
@@ -515,7 +607,12 @@ if __name__ == "__main__":
     )
     parser_create.add_argument("--root", type=str)
     parser_create.set_defaults(
-        func=lambda args: [create_dataset(args.root), create_dataset(args.root, False)]
+        func=lambda args: [
+            create_dataset(args.root, True),
+            create_dataset(args.root, False),
+            create_dataset(args.root, False, False),
+            create_dataset(args.root, True, False),
+        ]
     )
     args = parser.parse_args()
     args.func(args)

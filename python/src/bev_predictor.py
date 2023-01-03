@@ -4,6 +4,7 @@ import numpy as np
 import cv2
 import logging
 import json
+from time import time
 
 os.environ["TF_GPU_THREAD_MODE"] = "gpu_private"
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices"
@@ -67,10 +68,10 @@ def get_cam_lidar_ego_camcalib_lidarcalib_ann(cam_path, lidar_path):
 
 
 # @tf.function
-def preprocess(lidar_points):
+def preprocess(lidar_points, z_offset=3.7):
     lidar_xs = tf.cast(tf.math.round((lidar_points[:, 0] + 57.6) * 10), tf.int32)
     lidar_ys = tf.cast(tf.math.round((-lidar_points[:, 1] + 57.6) * 10), tf.int32)
-    lidar_zs = tf.cast(tf.math.round((lidar_points[:, 2] + 3.5) * 10), tf.int32)
+    lidar_zs = tf.cast(tf.math.round((lidar_points[:, 2] + z_offset) * 10), tf.int32)
     indices = tf.math.logical_and(
         tf.math.logical_and(
             tf.math.logical_and(lidar_xs >= 0, lidar_xs < 1152),
@@ -101,134 +102,179 @@ def preprocess(lidar_points):
     return input_image
 
 
-@tf.function
+xs = np.arange(1024)
+ys = np.arange(1024)
+pedestrian_mask = (xs[np.newaxis, :] - 512) ** 2 + (
+    ys[:, np.newaxis] - 512
+) ** 2 > 410**2
+vehicle_mask = (xs[np.newaxis, :] - 512) ** 2 + (
+    ys[:, np.newaxis] - 512
+) ** 2 > 510**2
+
+
+# @tf.function
 def postprocess(pred):
+    # pred = pred.numpy()
+    # t0 = time()
     y = pred[:, 64:-64, 64:-64, :]
-    y = tf.concat([y, tf.zeros((*y.shape[:3], 1))], -1)
-    m = tf.stack([y[..., 0] > 0.2, y[..., 1] > 0.68, y[..., 2] > 0], -1)
-    fy = y * tf.cast(m, tf.float32)
-    pedestrian_ccs = tfa.image.connected_components(m[..., 0])
-    vehicle_ccs = tfa.image.connected_components(m[..., 1])
-
-    n_pedestrian = tf.math.minimum(tf.reduce_max(pedestrian_ccs), 100)
-
-    pedestrian_cc = tf.tile(pedestrian_ccs, (n_pedestrian, 1, 1)) == tf.reshape(
-        tf.range(1, n_pedestrian + 1, dtype=tf.int32), (-1, 1, 1)
+    y[:, pedestrian_mask, 0] = 0
+    y[:, vehicle_mask, 1] = 0
+    pedestrian_fy = y[..., 0].copy()
+    vehicle_fy = y[..., 1].copy()
+    # pr = np.clip(pedestrian_fy.sum() / 2300, 0.15, 0.35)
+    # vr = np.clip(vehicle_fy.sum() / 24000, 0.5, 0.75)
+    # print(pedestrian_fy.sum(), vehicle_fy.sum())
+    # t1 = time()
+    # m = np.stack([y[..., 0] > 0.25, y[..., 1] > 0.64], -1)
+    # pedestrian_m = pedestrian_fy > pr
+    # vehicle_m = vehicle_fy > vr
+    pedestrian_m = pedestrian_fy > 0.32
+    vehicle_m = vehicle_fy > 0.64
+    # t2 = time()
+    # fy = y * m  # .astype(np.float32)
+    pedestrian_fy[np.logical_not(pedestrian_m)] = 0
+    vehicle_fy[np.logical_not(vehicle_m)] = 0
+    # t3 = time()
+    (
+        n_pedestrian,
+        pedestrian_ccs,
+        _,
+        pedestrian_centroid,
+    ) = cv2.connectedComponentsWithStats(
+        pedestrian_m[0].astype(np.uint8), connectivity=4
     )
-    pedestrian_filter = (
-        tf.reduce_sum(tf.cast(pedestrian_cc, tf.int32), (1, 2), keepdims=True) > 0
+    # t4 = time()
+    pedestrian_centroid1 = pedestrian_centroid[:, [1, 0]]
+    (
+        n_vehicle,
+        vehicle_ccs,
+        _,
+        vehicle_centroid,
+    ) = cv2.connectedComponentsWithStats(vehicle_m[0].astype(np.uint8), connectivity=4)
+    # t5 = time()
+    vehicle_centroid1 = vehicle_centroid[:, [1, 0]]
+    pedestrian_confidence1 = np.zeros([n_pedestrian])
+    # t6 = time()
+    # np.maximum.at(
+    # pedestrian_confidence1,
+    # np.reshape(pedestrian_ccs, [-1]),
+    # np.reshape(fy[..., 0], [-1]),
+    # )
+    # print(pedestrian_confidence1.shape, pedestrian_ccs.shape, fy[..., 0].shape)
+    pedestrian_confidence1 = tf.tensor_scatter_nd_max(
+        pedestrian_confidence1,
+        np.reshape(pedestrian_ccs, [-1, 1]),
+        np.reshape(pedestrian_fy, [-1]),
+    ).numpy()
+    # t7 = time()
+    pedestrian_centroid1 = pedestrian_centroid1[1:]
+    pedestrian_confidence1 = pedestrian_confidence1[1:]
+
+    vehicle_confidence1 = np.zeros([n_vehicle])
+    # t8 = time()
+    # np.maximum.at(
+    # vehicle_confidence1,
+    # np.reshape(vehicle_ccs, [-1]),
+    # np.reshape(fy[..., 1], [-1]),
+    # )
+    vehicle_confidence1 = tf.tensor_scatter_nd_max(
+        vehicle_confidence1,
+        np.reshape(vehicle_ccs, [-1, 1]),
+        np.reshape(vehicle_fy, [-1]),
+    ).numpy()
+    vehicle_centroid1 = vehicle_centroid1[1:]
+    vehicle_confidence1 = vehicle_confidence1[1:]
+    # t9 = time()
+    # print(pedestrian_centroid1.shape[0], vehicle_centroid1.shape[0])
+    # print(
+    # "post",
+    # t1 - t0,
+    # t2 - t1,
+    # t3 - t2,
+    # t4 - t3,
+    # t5 - t4,
+    # t6 - t5,
+    # t7 - t6,
+    # t8 - t7,
+    # t9 - t8,
+    # )
+    # print("first", pedestrian_centroid1.shape, vehicle_centroid1.shape)
+
+    # return (
+    # pedestrian_centroid1,
+    # pedestrian_confidence1,
+    # vehicle_centroid1,
+    # vehicle_confidence1,
+    # )
+
+    pedestrian_fy = y[..., 0]
+    vehicle_fy = y[..., 1]
+    pedestrian_m = np.logical_and(pedestrian_fy <= 0.29, pedestrian_fy > 0.01)
+    vehicle_m = np.logical_and(vehicle_fy <= 0.54, vehicle_fy > 0.2)
+    pedestrian_fy[np.logical_not(pedestrian_m)] = 0
+    vehicle_fy[np.logical_not(vehicle_m)] = 0
+
+    (
+        n_pedestrian,
+        pedestrian_ccs,
+        _,
+        pedestrian_centroid,
+    ) = cv2.connectedComponentsWithStats(
+        pedestrian_m[0].astype(np.uint8), connectivity=4
     )
-    area = tf.reduce_sum(tf.cast(pedestrian_filter, tf.int32), (1, 2)) > 0
+    # t4 = time()
+    pedestrian_centroid2 = pedestrian_centroid[:, [1, 0]]
+    (
+        n_vehicle,
+        vehicle_ccs,
+        _,
+        vehicle_centroid,
+    ) = cv2.connectedComponentsWithStats(vehicle_m[0].astype(np.uint8), connectivity=4)
 
-    pedestrian_cc = tf.boolean_mask(pedestrian_cc, area)
-    pedestrian_filter = tf.boolean_mask(pedestrian_filter, area)
+    # total_pedestrian += n_pedestrian
+    # total_vehicle += n_vehicle
 
-    pedestrian_cc = tf.math.logical_and(pedestrian_cc, pedestrian_filter)
-    xs, ys = tf.meshgrid(tf.range(m.shape[2]), tf.range(m.shape[1]))
-    yxs = tf.stack([ys, xs], -1)
-    yxs = tf.tile(tf.expand_dims(yxs, 0), (tf.shape(pedestrian_cc)[0], 1, 1, 1))
-    pedestrian_centroid = yxs * tf.expand_dims(tf.cast(pedestrian_cc, tf.int32), -1)
-    total = tf.reduce_sum(tf.cast(pedestrian_cc, tf.float32), (1, 2))
-    pedestrian_centroid1 = tf.reduce_sum(
-        tf.cast(pedestrian_centroid, tf.float32), (1, 2)
-    ) / tf.expand_dims(total, -1)
-    pedestrian_confidence1 = tf.reduce_max(
-        fy[..., 0] * tf.cast(pedestrian_cc, tf.float32), (1, 2)
-    )  # / total
+    # if total_pedestrian > 100:
+    # if total_vehicle > 100:
+    # m = np.stack([y[..., 0] > 0.05, y[..., 1] > 0.4], -1)
+    # else:
+    # m = np.stack([y[..., 0] > 0.05, y[..., 1] > 0.2], -1)
+    # else:
+    # if total_vehicle > 100:
+    # m = np.stack([y[..., 0] > 0.01, y[..., 1] > 0.4], -1)
+    # else:
+    # m = np.stack([y[..., 0] > 0.01, y[..., 1] > 0.2], -1)
 
-    n_vehicle = tf.math.minimum(tf.reduce_max(vehicle_ccs), 100)
+    vehicle_centroid2 = vehicle_centroid[:, [1, 0]]
+    pedestrian_confidence2 = np.zeros([n_pedestrian])
 
-    vehicle_cc = tf.tile(vehicle_ccs, (n_vehicle, 1, 1)) == tf.reshape(
-        tf.range(1, n_vehicle + 1, dtype=tf.int32), (-1, 1, 1)
+    pedestrian_confidence2 = tf.tensor_scatter_nd_max(
+        pedestrian_confidence2,
+        np.reshape(pedestrian_ccs, [-1, 1]),
+        np.reshape(pedestrian_fy, [-1]),
+    ).numpy()
+    # t7 = time()
+    pedestrian_centroid2 = pedestrian_centroid2[1:]
+    pedestrian_confidence2 = pedestrian_confidence2[1:]  # * 0.5
+
+    vehicle_confidence2 = np.zeros([n_vehicle])
+    vehicle_confidence2 = tf.tensor_scatter_nd_max(
+        vehicle_confidence2,
+        np.reshape(vehicle_ccs, [-1, 1]),
+        np.reshape(vehicle_fy, [-1]),
+    ).numpy()
+    vehicle_centroid2 = vehicle_centroid2[1:]
+    vehicle_confidence2 = vehicle_confidence2[1:]  # * 0.5
+
+    pedestrian_centroid = np.concatenate(
+        [pedestrian_centroid1, pedestrian_centroid2], 0
     )
-    vehicle_filter = (
-        tf.reduce_sum(tf.cast(vehicle_cc, tf.int32), (1, 2), keepdims=True) > 0
-    )
-    area = tf.reduce_sum(tf.cast(vehicle_filter, tf.int32), (1, 2)) > 0
-
-    vehicle_cc = tf.boolean_mask(vehicle_cc, area)
-    vehicle_filter = tf.boolean_mask(vehicle_filter, area)
-
-    vehicle_cc = tf.math.logical_and(vehicle_cc, vehicle_filter)
-    xs, ys = tf.meshgrid(tf.range(m.shape[2]), tf.range(m.shape[1]))
-    yxs = tf.stack([ys, xs], -1)
-    yxs = tf.tile(tf.expand_dims(yxs, 0), (tf.shape(vehicle_cc)[0], 1, 1, 1))
-    vehicle_centroid = yxs * tf.expand_dims(tf.cast(vehicle_cc, tf.int32), -1)
-    total = tf.reduce_sum(tf.cast(vehicle_cc, tf.float32), (1, 2))
-    vehicle_centroid1 = tf.reduce_sum(
-        tf.cast(vehicle_centroid, tf.float32), (1, 2)
-    ) / tf.expand_dims(total, -1)
-    vehicle_confidence1 = tf.reduce_max(
-        fy[..., 1] * tf.cast(vehicle_cc, tf.float32), (1, 2)
-    )  # / total
-
-    m = tf.stack([y[..., 0] <= 0.15, y[..., 1] <= 0.58, y[..., 2] > 0], -1)
-    y = y * tf.cast(m, tf.float32)
-    y = tfa.image.gaussian_filter2d(y)
-    y = tfa.image.gaussian_filter2d(y)
-    y = tfa.image.gaussian_filter2d(y)
-    m = tf.stack([y[..., 0] > 0.01, y[..., 1] > 0.2, y[..., 2] > 0], -1)
-    fy = y * tf.cast(m, tf.float32)
-    pedestrian_ccs = tfa.image.connected_components(m[..., 0])
-    vehicle_ccs = tfa.image.connected_components(m[..., 1])
-
-    n_pedestrian = tf.math.minimum(tf.reduce_max(pedestrian_ccs), 100)
-
-    pedestrian_cc = tf.tile(pedestrian_ccs, (n_pedestrian, 1, 1)) == tf.reshape(
-        tf.range(1, n_pedestrian + 1, dtype=tf.int32), (-1, 1, 1)
-    )
-    pedestrian_filter = (
-        tf.reduce_sum(tf.cast(pedestrian_cc, tf.int32), (1, 2), keepdims=True) > 0
-    )
-    area = tf.reduce_sum(tf.cast(pedestrian_filter, tf.int32), (1, 2)) > 0
-
-    pedestrian_cc = tf.boolean_mask(pedestrian_cc, area)
-    pedestrian_filter = tf.boolean_mask(pedestrian_filter, area)
-
-    pedestrian_cc = tf.math.logical_and(pedestrian_cc, pedestrian_filter)
-    xs, ys = tf.meshgrid(tf.range(m.shape[2]), tf.range(m.shape[1]))
-    yxs = tf.stack([ys, xs], -1)
-    yxs = tf.tile(tf.expand_dims(yxs, 0), (tf.shape(pedestrian_cc)[0], 1, 1, 1))
-    pedestrian_centroid = yxs * tf.expand_dims(tf.cast(pedestrian_cc, tf.int32), -1)
-    total = tf.reduce_sum(tf.cast(pedestrian_cc, tf.float32), (1, 2))
-    pedestrian_centroid2 = tf.reduce_sum(
-        tf.cast(pedestrian_centroid, tf.float32), (1, 2)
-    ) / tf.expand_dims(total, -1)
-    pedestrian_confidence2 = (
-        tf.reduce_max(fy[..., 0] * tf.cast(pedestrian_cc, tf.float32), (1, 2)) * 0.5
-    )  # / total
-
-    n_vehicle = tf.math.minimum(tf.reduce_max(vehicle_ccs), 100)
-
-    vehicle_cc = tf.tile(vehicle_ccs, (n_vehicle, 1, 1)) == tf.reshape(
-        tf.range(1, n_vehicle + 1, dtype=tf.int32), (-1, 1, 1)
-    )
-    vehicle_filter = (
-        tf.reduce_sum(tf.cast(vehicle_cc, tf.int32), (1, 2), keepdims=True) > 0
-    )
-    area = tf.reduce_sum(tf.cast(vehicle_filter, tf.int32), (1, 2)) > 0
-
-    vehicle_cc = tf.boolean_mask(vehicle_cc, area)
-    vehicle_filter = tf.boolean_mask(vehicle_filter, area)
-
-    vehicle_cc = tf.math.logical_and(vehicle_cc, vehicle_filter)
-    xs, ys = tf.meshgrid(tf.range(m.shape[2]), tf.range(m.shape[1]))
-    yxs = tf.stack([ys, xs], -1)
-    yxs = tf.tile(tf.expand_dims(yxs, 0), (tf.shape(vehicle_cc)[0], 1, 1, 1))
-    vehicle_centroid = yxs * tf.expand_dims(tf.cast(vehicle_cc, tf.int32), -1)
-    total = tf.reduce_sum(tf.cast(vehicle_cc, tf.float32), (1, 2))
-    vehicle_centroid2 = tf.reduce_sum(
-        tf.cast(vehicle_centroid, tf.float32), (1, 2)
-    ) / tf.expand_dims(total, -1)
-    vehicle_confidence2 = (
-        tf.reduce_max(fy[..., 1] * tf.cast(vehicle_cc, tf.float32), (1, 2)) * 0.5
-    )  # / total
-    pedestrian_centroid = tf.concat([pedestrian_centroid1, pedestrian_centroid2], 0)
-    vehicle_centroid = tf.concat([vehicle_centroid1, vehicle_centroid2], 0)
-    pedestrian_confidence = tf.concat(
+    vehicle_centroid = np.concatenate([vehicle_centroid1, vehicle_centroid2], 0)
+    pedestrian_confidence = np.concatenate(
         [pedestrian_confidence1, pedestrian_confidence2], 0
     )
-    vehicle_confidence = tf.concat([vehicle_confidence1, vehicle_confidence2], 0)
+    vehicle_confidence = np.concatenate([vehicle_confidence1, vehicle_confidence2], 0)
+    # print("second", pedestrian_centroid.shape, vehicle_centroid.shape)
     return (
         pedestrian_centroid,
         pedestrian_confidence,
@@ -239,32 +285,59 @@ def postprocess(pred):
 
 # @tf.function
 def predict_tf(bev_model, lidar_points):
-    input_image = preprocess(lidar_points)
+    # t0 = time()
+    input_image = preprocess(lidar_points, 3.6)
+    input_image2 = preprocess(lidar_points, 3.1)
+    # t1 = time()
+    summary = False
+    if summary:
+        input_summary_image = np.max(input_image.numpy()[..., :-1], -1)[0][
+            :, :, np.newaxis
+        ]
+        input_summary_image = np.tile(input_summary_image, (1, 1, 3))
+    # print("lidar maen", tf.reduce_mean(input_image))
     preds = bev_model(
         tf.concat(
             [
                 input_image,
-                input_image[:, :, ::-1, :],
+                input_image2[:, :, ::-1, :],
+                # # input_image[:, :, ::-1, :],
                 input_image[:, ::-1, :, :],
-                input_image[:, ::-1, ::-1, :],  #
-                tf.transpose(input_image, (0, 2, 1, 3)),
+                # input_image2[:, ::-1, ::-1, :],  #
+                # tf.transpose(input_image, (0, 2, 1, 3)),
             ],
             0,
-        )
-    )["output_0"]
+        ),
+    )["detector"]
     pred = (
         preds[:1]
         + preds[1:2, :, ::-1, :]
+        # # + preds[1:2, :, ::-1, :]
         + preds[2:3, ::-1, :, :]
-        + preds[3:4, ::-1, ::-1, :]  #
-        + tf.transpose(preds[4:5], (0, 2, 1, 3))
+        # + preds[3:4, ::-1, ::-1, :]  #
+        # + tf.transpose(preds[3:4], (0, 2, 1, 3))
     ) / preds.shape[0]
+    pred = pred.numpy()
+    # t2 = time()
+    # print(pred)
     (
         pedestrian_centroid,
         pedestrian_confidence,
         vehicle_centroid,
         vehicle_confidence,
     ) = postprocess(pred)
+    # t3 = time()
+    # print(t1 - t0, t2 - t1, t3 - t2)
+    if summary:
+        pred_summary_image = np.concatenate(
+            [pred[0].numpy(), np.zeros((1152, 1152, 1), np.float32)], -1
+        )
+        summary_image = (
+            np.concatenate([input_summary_image, pred_summary_image], 1) * 255
+        )
+        summary_image = summary_image.astype(np.uint8)
+        cv2.imwrite("./summary.png", summary_image)
+        exit()
 
     return (
         pedestrian_centroid,
@@ -274,7 +347,7 @@ def predict_tf(bev_model, lidar_points):
     )
 
 
-def predict(bev_model, cam_image, lidar, ego, cam_calib, lidar_calib):
+def predict(bev_model, lidar, ego, cam_calib, lidar_calib):
 
     lidar_points = tf.cast(lidar, tf.float32)
     (
@@ -289,13 +362,16 @@ def predict(bev_model, cam_image, lidar, ego, cam_calib, lidar_calib):
     for n in range(pedestrian_centroid.shape[0]):
         pedestrian_centers.append(
             np.append(
-                pedestrian_centroid[n].numpy(), [0, pedestrian_confidence[n].numpy()]
+                # pedestrian_centroid[n].numpy(), [0, pedestrian_confidence[n].numpy()]
+                pedestrian_centroid[n],
+                [0, pedestrian_confidence[n]],
             )
         )
 
     for n in range(vehicle_centroid.shape[0]):
         vehicle_centers.append(
-            np.append(vehicle_centroid[n].numpy(), [0, vehicle_confidence[n].numpy()])
+            # np.append(vehicle_centroid[n].numpy(), [0, vehicle_confidence[n].numpy()])
+            np.append(vehicle_centroid[n], [0, vehicle_confidence[n]])
         )
 
     ego_txyz = tf.cast(ego["translation"], np.float32)

@@ -3,184 +3,227 @@ import tensorflow_addons as tfa
 from tensorflow.keras import Model, Sequential
 from tensorflow.keras.layers import (
     Conv2D,
+    DepthwiseConv2D,
     Conv2DTranspose,
     LayerNormalization as LN,
+    BatchNormalization as BN,
+    ReLU,
+    Dropout,
 )
 
 
-class ResBlock(tf.keras.Model):
-    def __init__(self, channels):
-        super(ResBlock, self).__init__()
-        self.channels = channels
-        self.conv1 = tf.keras.layers.Conv2D(
-            self.channels, 3, padding="same", activation="relu"
+def dw_conv2d(ksize, strides, activation, x):
+    y = DepthwiseConv2D(
+        ksize,
+        strides,
+        padding="same",
+        # kernel_regularizer=tf.keras.regularizers.L1L2(1e-3, 1e-3),
+        # bias_regularizer=tf.keras.regularizers.l2(1e-3),
+        # activity_regularizer=tf.keras.regularizers.l2(1e-2),
+    )(x)
+    if activation is not None:
+        y = activation(y)
+        # y = LN()(y)
+        # y = BN(momentum=0.9)(y)
+    return y
+
+
+def sep_conv2d(channels, ksize, strides, activation, x):
+    y = DepthwiseConv2D(
+        ksize,
+        strides,
+        padding="same",
+        # kernel_regularizer=tf.keras.regularizers.L1L2(1e-2, 1e-2),
+        # bias_regularizer=tf.keras.regularizers.l2(1e-2),
+        # activity_regularizer=tf.keras.regularizers.l2(1e-2),
+    )(x)
+    y = ReLU()(y)
+    # y = BN(momentum=0.9)(y)
+    # y = LN()(y)
+    y = conv2d(channels, 1, (1, 1), activation, y)
+    # y = BN(momentum=0.9)(y)
+    # y = LN()(y)
+    return y
+
+
+def conv2d(channels, ksize, strides, activation, x):
+    y = Conv2D(
+        channels,
+        ksize,
+        strides,
+        padding="same",
+        # kernel_regularizer=tf.keras.regularizers.L1L2(1e-2, 1e-2),
+        # bias_regularizer=tf.keras.regularizers.l2(1e-2),
+        # activity_regularizer=tf.keras.regularizers.l2(1e-2),
+    )(x)
+    if activation is not None:
+        y = activation(y)
+        # y = BN(momentum=0.9)(y)
+        # y = LN()(y)
+    return y
+
+
+def conv2d_transpose(channels, ksize, strides, activation, x):
+    y = Conv2DTranspose(
+        channels,
+        ksize,
+        strides,
+        padding="same",
+        # kernel_regularizer=tf.keras.regularizers.L1L2(1e-2, 1e-2),
+        # bias_regularizer=tf.keras.regularizers.l2(1e-2),
+        # activity_regularizer=tf.keras.regularizers.l2(1e-2),
+    )(x)
+    if activation is not None:
+        y = activation(y)
+        # y = BN(momentum=0.9)(y)
+        # y = LN()(y)
+    return y
+
+
+def resblock(x, channels, ksize=3, dw=False, training=True):
+    s = x
+    if dw:
+        y = sep_conv2d(channels, ksize, (1, 1), ReLU(), x)
+        y = sep_conv2d(channels, ksize, (1, 1), None, y)
+    else:
+        y = conv2d(channels, ksize, (1, 1), ReLU(), x)
+        y = conv2d(channels, ksize, (1, 1), None, y)
+    y = tf.keras.layers.Add()([s, y])
+    y = ReLU()(y)
+    return y
+
+
+def resblock_v2(x, channels, ksize=3, dw=False, training=True):
+    s = x
+    y = conv2d(channels * 2, 1, (1, 1), ReLU(6), x)
+    y = dw_conv2d(ksize, (1, 1), ReLU(6), y)
+    y = conv2d(channels, 1, (1, 1), None, y)
+    y = tf.keras.layers.Add()([s, y])
+    y = ReLU()(y)
+    return y
+
+
+def sequential(x, layers, training=True):
+    for layer in layers:
+        x = layer(x, training=training)
+    return x
+
+
+def hard_sigmoid(x):
+    return ReLU(6.0)(x + 3.0) * (1.0 / 6.0)
+
+
+@tf.custom_gradient
+def clip(x, min_value, max_value):
+    y = tf.clip_by_value(x, min_value, max_value)
+
+    @tf.function
+    def backward(w):
+        return w
+
+    return y, backward
+
+
+def get_detector_functional_model(x, training=True, for_vitis=False):
+    deep = True
+    # s = sep_sep_conv2d(32, 7, (2, 2), ReLU(), x)
+    s = sep_conv2d(32, 7, (2, 2), ReLU(), x)
+    x1 = resblock_v2(s, 32, 3, False, training=training)
+    x1 = resblock_v2(x1, 32, 3, False, training=training)
+    # x1 = tf.keras.layers.Add()([x1, s])
+    # s = sep_sep_conv2d(64, 5, (2, 2), ReLU(), x1)
+    s = sep_conv2d(64, 5, (2, 2), ReLU(), x1)
+    x2 = resblock_v2(s, 64, 3, training=training)
+    x2 = resblock_v2(x2, 64, 3, training=training)
+    # x2 = tf.keras.layers.Add()([x2, s])
+    # x2 = sep_conv2d(64, 3, (1, 1), ReLU(), x2)
+    # if training:
+    # x2 = tf.quantization.quantize_and_dequantize(x2, 0, 1)
+
+    s = sep_conv2d(128, 3, (2, 2), ReLU(), x2)
+    x3 = resblock_v2(s, 128, 3, training=training)
+    x3 = resblock_v2(x3, 128, 3, training=training)
+    # x3 = tf.keras.layers.Add()([x3, s])
+    s = sep_conv2d(256, 3, (2, 2), ReLU(), x3)
+    x4 = resblock_v2(s, 256, 3, False, training=training)
+    x4 = resblock_v2(x4, 256, 3, False, training=training)
+    # x4 = tf.keras.layers.Add()([x4, s])
+    x4 = sep_conv2d(256, 3, (1, 1), ReLU(), x4)
+
+    if deep:
+        s = sep_conv2d(512, 3, (2, 2), ReLU(), x4)
+        x5 = resblock_v2(s, 512, 3, False, training=training)
+        x5 = resblock_v2(x5, 512, 3, False, training=training)
+        # x5 = tf.keras.layers.Add()([x5, s])
+        s = sep_conv2d(1024, 3, (2, 2), ReLU(), x5)
+        x6 = resblock_v2(s, 1024, 3, False, training=training)
+        x6 = resblock_v2(x6, 1024, 3, False, training=training)
+        # x6 = tf.keras.layers.Add()([x6, s])
+        x6 = sep_conv2d(1024, 3, (1, 1), ReLU(), x6)
+
+        s = conv2d_transpose(512, 3, (2, 2), ReLU(), x6)
+        s = tf.keras.layers.Concatenate(-1)([s, x5])
+        y = resblock_v2(s, 1024, 3, False, training=training)
+        y = resblock_v2(y, 1024, 3, False, training=training)
+        # y = tf.keras.layers.Add()([y, s])
+        s = conv2d_transpose(256, 3, (2, 2), ReLU(), y)
+        s = tf.keras.layers.Concatenate(-1)([s, x4])
+        y = resblock_v2(s, 512, 3, False, training=training)
+        y = resblock_v2(y, 512, 3, False, training=training)
+        # y = tf.keras.layers.Add()([y, s])
+        y2 = sep_conv2d(256, 3, (1, 1), ReLU(), y)
+    else:
+        y2 = x4
+
+    s = conv2d_transpose(128, 3, (2, 2), ReLU(), y2)
+    s = tf.keras.layers.Concatenate(-1)([s, x3])
+    y = resblock_v2(s, 256, 3, False, training=training)
+    y = resblock_v2(y, 256, 3, False, training=training)
+    # y = tf.keras.layers.Add()([y, s])
+    s = conv2d_transpose(64, 3, (2, 2), ReLU(), y)
+    s = tf.keras.layers.Concatenate(-1)([s, x2])
+    y = resblock_v2(s, 128, 3, training=training)
+    y = resblock_v2(y, 128, 3, training=training)
+    # y = tf.keras.layers.Add()([y, s])
+    y4 = sep_conv2d(64, 3, (1, 1), ReLU(), y)
+
+    s = conv2d_transpose(32, 3, (2, 2), ReLU(), y4)
+    s = tf.keras.layers.Concatenate(-1)([s, x1])
+
+    y = resblock_v2(s, 64, 3, False, training=training)
+    y = resblock_v2(y, 64, 3, False, training=training)
+    # y = tf.keras.layers.Add()([y, s])
+
+    s = conv2d_transpose(16, 3, (2, 2), ReLU(), y)
+    y = resblock_v2(s, 16, 3, False, training=training)
+    y = resblock_v2(y, 16, 3, False, training=training)
+    # y = tf.keras.layers.Add()([y, s])
+
+    y = conv2d(2, 3, (1, 1), None, y)
+    # y = hard_sigmoid(y)
+    # if not for_vitis:
+    y = tf.keras.layers.Activation("sigmoid")(y)
+
+    return y
+
+
+class DetectorTrainer(Model):
+    def __init__(
+        self,
+        input_shape=(None, None, 41),
+        training=True,
+        for_vitis=False,
+        name="detector",
+    ):
+        super(DetectorTrainer, self).__init__(name=name)
+        detector_input = tf.keras.layers.Input(input_shape)
+        detector_output = get_detector_functional_model(
+            detector_input, training, for_vitis
         )
-        self.conv2 = tf.keras.layers.Conv2D(
-            self.channels, 3, padding="same", activation="relu"
+        self.detector = tf.keras.Model(
+            inputs=[detector_input], outputs=[detector_output], name="detector"
         )
-        self.ln1 = LN()
-        self.ln2 = LN()
-
-    def call(self, inputs, training=True):
-        x = inputs
-        y = self.conv1(x)
-        y = self.ln1(y, training=training)
-        y = self.conv2(y)
-        y = self.ln2(y, training=training)
-        return x + y
-
-
-class Detector(Model):
-    def __init__(self, name="detector"):
-        super(Detector, self).__init__(name=name)
         self.step = tf.Variable(0, dtype=tf.int64, trainable=False)
-        self.downsample1 = Sequential(
-            [Conv2D(32, 7, (2, 2), padding="same", activation="relu"), LN()]
-        )
-        self.resblocks1 = Sequential(
-            [
-                ResBlock(32),
-                ResBlock(32),
-            ]
-        )
-        self.downsample2 = Sequential(
-            [Conv2D(64, 5, (2, 2), padding="same", activation="relu"), LN()]
-        )
-        self.resblocks2 = Sequential(
-            [
-                ResBlock(64),
-                ResBlock(64),
-            ]
-        )
-        self.conv1 = Sequential(
-            [Conv2D(64, 3, padding="same", activation="relu"), LN()]
-        )
-
-        self.downsample3 = Sequential(
-            [Conv2D(128, 3, (2, 2), padding="same", activation="relu"), LN()]
-        )
-        self.resblocks3 = Sequential(
-            [
-                ResBlock(128),
-                ResBlock(128),
-            ]
-        )
-        self.downsample4 = Sequential(
-            [Conv2D(256, 3, (2, 2), padding="same", activation="relu"), LN()]
-        )
-        self.resblocks4 = Sequential(
-            [
-                ResBlock(256),
-                ResBlock(256),
-            ]
-        )
-        self.conv2 = Sequential(
-            [Conv2D(256, 3, padding="same", activation="relu"), LN()]
-        )
-
-        self.downsample5 = Sequential(
-            [Conv2D(512, 3, (2, 2), padding="same", activation="relu"), LN()]
-        )
-        self.resblocks5 = Sequential(
-            [
-                ResBlock(512),
-                ResBlock(512),
-            ]
-        )
-        self.downsample6 = Sequential(
-            [Conv2D(1024, 3, (2, 2), padding="same", activation="relu"), LN()]
-        )
-        self.resblocks6 = Sequential(
-            [
-                ResBlock(1024),
-                ResBlock(1024),
-            ]
-        )
-        self.conv3 = Sequential(
-            [Conv2D(1024, 3, padding="same", activation="relu"), LN()]
-        )
-
-        self.upsample1 = Sequential(
-            [
-                Conv2DTranspose(512, 3, (2, 2), padding="same", activation="relu"),
-                LN(),
-            ]
-        )
-        self.resblocks7 = Sequential(
-            [
-                ResBlock(1024),
-                ResBlock(1024),
-            ]
-        )
-        self.upsample2 = Sequential(
-            [
-                Conv2DTranspose(256, 3, (2, 2), padding="same", activation="relu"),
-                LN(),
-            ]
-        )
-        self.resblocks8 = Sequential(
-            [
-                ResBlock(512),
-                ResBlock(512),
-            ]
-        )
-        self.conv4 = Sequential(
-            [Conv2D(256, 3, padding="same", activation="relu"), LN()]
-        )
-
-        self.upsample3 = Sequential(
-            [
-                Conv2DTranspose(128, 3, (2, 2), padding="same", activation="relu"),
-                LN(),
-            ]
-        )
-        self.resblocks9 = Sequential(
-            [
-                ResBlock(256),
-                ResBlock(256),
-            ]
-        )
-        self.upsample4 = Sequential(
-            [
-                Conv2DTranspose(64, 3, (2, 2), padding="same", activation="relu"),
-                LN(),
-            ]
-        )
-        self.resblocks10 = Sequential(
-            [
-                ResBlock(128),
-                ResBlock(128),
-            ]
-        )
-        self.conv5 = Sequential(
-            [Conv2D(64, 3, padding="same", activation="relu"), LN()]
-        )
-
-        self.upsample5 = Sequential(
-            [
-                Conv2DTranspose(32, 3, (2, 2), padding="same", activation="relu"),
-                LN(),
-            ]
-        )
-        self.resblocks11 = Sequential(
-            [
-                ResBlock(64),
-                ResBlock(64),
-            ]
-        )
-        self.upsample6 = Sequential(
-            [
-                Conv2DTranspose(16, 3, (2, 2), padding="same", activation="relu"),
-                LN(),
-            ]
-        )
-        self.resblocks12 = Sequential(
-            [
-                ResBlock(16),
-                ResBlock(16),
-            ]
-        )
-        self.conv6 = Conv2D(2, 3, padding="same", activation="sigmoid")
 
     def image_summary(self, x, y, g):
         s = y
@@ -201,7 +244,7 @@ class Detector(Model):
         filtered_vehicle_ccs = tf.zeros(vehicle_ccs.shape, tf.bool)
         pedestrian_centroid_image = tf.zeros(pedestrian_ccs.shape, tf.float32)
         vehicle_centroid_image = tf.zeros(vehicle_ccs.shape, tf.float32)
-        for n in range(1, 31):
+        for n in range(1, 9):
             pedestrian_cc = pedestrian_ccs == n
             pedestrian_filter = (
                 tf.reduce_sum(tf.cast(pedestrian_cc, tf.int32), (1, 2), keepdims=True)
@@ -359,65 +402,13 @@ class Detector(Model):
             max_outputs=16,
             step=self.step,
         )
-        self.step.assign_add(1)
         return s
 
-    def call(self, x, training=True, summary=True):
-        if summary:
-            x, g = x[..., :-2], x[..., -2:]
-        s = self.downsample1(x, training=training)
-        x1 = self.resblocks1(s)
-        x1 = x1 + s
-        s = self.downsample2(x1, training=training)
-        x2 = self.resblocks2(s)
-        x2 = x2 + s
-        x2 = self.conv1(x2)
-
-        s = self.downsample3(x2, training=training)
-        x3 = self.resblocks3(s)
-        x3 = x3 + s
-        s = self.downsample4(x3, training=training)
-        x4 = self.resblocks4(s)
-        x4 = x4 + s
-        x4 = self.conv2(x4)
-
-        s = self.downsample5(x4, training=training)
-        x5 = self.resblocks5(s)
-        x5 = x5 + s
-        s = self.downsample6(x5, training=training)
-        x6 = self.resblocks6(s)
-        x6 = x6 + s
-        x6 = self.conv3(x6)
-
-        s = self.upsample1(x6, training=training)
-        s = tf.concat([s, x5], -1)
-        y = self.resblocks7(s)
-        y1 = y + s
-        s = self.upsample2(y1, training=training)
-        s = tf.concat([s, x4], -1)
-        y = self.resblocks8(s)
-        y = y + s
-        y2 = self.conv4(y)
-
-        s = self.upsample3(y2, training=training)
-        s = tf.concat([s, x3], -1)
-        y = self.resblocks9(s)
-        y3 = y + s
-        s = self.upsample4(y3, training=training)
-        s = tf.concat([s, x2], -1)
-        y = self.resblocks10(s)
-        y = y + s
-        y4 = self.conv5(y)
-
-        s = self.upsample5(y4, training=training)
-        s = tf.concat([s, x1], -1)
-        y = self.resblocks11(s)
-        y5 = y + s
-        s = self.upsample6(y5, training=training)
-        y = self.resblocks12(s)
-        y = y + s
-        y = self.conv6(y)
-
-        if summary:
-            y = self.image_summary(x, y, g)
+    def call(self, x, training=True):
+        x, g = x[..., :-2], x[..., -2:]
+        y = self.detector(x)
+        y = tf.cond(
+            self.step % 100 == 0, lambda: self.image_summary(x, y, g), lambda: y
+        )
+        self.step.assign_add(1)
         return y
