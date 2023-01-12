@@ -10,6 +10,9 @@ numpy-quaternion = "*"
 tensorflow-addons = "*"
 opencv-python = "*"
 scikit-image = "*"
+numba = "*"
+jax = "*"
+jaxlib = "*"
 
 [dev-packages]
 flake8 = "*"
@@ -19,6 +22,7 @@ tensorboard = "*"
 tensorboard-plugin-profile = "*"
 keras-flops = "*"
 tensorflow-model-optimization = "*"
+pyvista = "*"
 
 [requires]
 python_version = "3.10"

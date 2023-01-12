@@ -34,7 +34,11 @@ tensorboard --logdir tb_logs
 ## Convert a training checkpoint to a TensorFlow saved model
 
 ```bash
+# For one checkpoint
 python src/convert_bev_to_saved_model.py --ckpt checkpoints/bev.ckpt --output /path/to/bev_saved_model
+
+# For two checkpoints (pedestrian/vehicle)
+python src/merge_and_convert_bev_to_saved_model.py --pckpt pedestrian_checkpoints/bev.ckpt --vckpt vehicle_checkpoints/bev.ckpt --output /path/to/bev_saved_model
 
 # Update the saved model if necessary
 cp -r /path/to/bev_saved_model models/bev_model
@@ -79,7 +83,9 @@ cp -r /path/to/signate_data/train /path/to/Vitis-AI/vitis/
 # Now you should be inside a docker container
 cd vitis/src
 pip install tensorflow-gpu==2.8 numpy-quaternion tensorflow-addons
-python kv260_convert_bev.py --dataset ../train/3d_labels
+python kv260_convert_bev.py --dataset ../train/3d_labels --pckpt pedestrian_checkpoints/bev.ckpt --vckpt vehicle_checkpoints/bev.ckpt
+
+# replace a path to arch.json if you have a custom DPU architecture
 vai_c_tensorflow2 -m ./quantized_model.h5 -a /opt/vitis_ai/compiler/arch/DPUCZDX8G/KV260/arch.json -o ./compiled -n bev
 # bev.xmodel should be generated under /path/to/Vitis-AI/vitis/src/compiled directory
 ```
