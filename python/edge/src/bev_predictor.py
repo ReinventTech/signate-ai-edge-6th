@@ -5,31 +5,67 @@ import cv2
 import xir
 import vart
 from time import time
+from numba import njit
 
 
+@njit
+def max_at(y, a, b, n):
+    for i in range(n):
+        y[a[i]] = max(y[a[i]], b[i])
+    return y
+
+
+@njit
+def max_at3(y, a, b, c, d, n):
+    for i in range(n):
+        y[a[i], b[i], c[i]] = max(y[a[i], b[i], c[i]], d[i])
+    return y
+
+
+@njit
+def merge3(y0, y1, y2):
+    y = np.maximum(y0, np.minimum(y1, np.maximum(y0, y2)))
+    return y
+
+
+# @njit
+def scale_and_sigmoid(x, scale):
+    # FIXME integer precision
+    y = x.astype(np.float32) / (2**scale)
+    y = 1 / (1 + np.exp(-y))
+
+    return y
+
+
+# @njit
 def preprocess(lidar_points, z_offset=3.7):
-    lidar_xs = (np.round(lidar_points[:, 0] * 10)).astype(np.int32) + 576
-    lidar_ys = (np.round(-lidar_points[:, 1] * 10)).astype(np.int32) + 576
-    lidar_zs = (np.round((lidar_points[:, 2] + z_offset) * 5)).astype(np.int32)
-    indices = np.logical_and.reduce(
-        (
-            lidar_xs >= 0,
-            lidar_xs < 1152,
-            lidar_ys >= 0,
-            lidar_ys < 1152,
-            lidar_zs >= 0,
-            lidar_zs < 24,
-        )
+    lidar_xs = ((lidar_points[:, 0] * 10 + 0.5)).astype(np.int32) + 576
+    lidar_ys = ((-lidar_points[:, 1] * 10 + 0.5)).astype(np.int32) + 576
+    lidar_zs = (((lidar_points[:, 2] + z_offset + 0.5) * 5)).astype(np.int32)
+    indices = np.logical_and(
+        np.logical_and(
+            np.logical_and(lidar_xs >= 0, lidar_xs < 1152),
+            np.logical_and(lidar_ys >= 0, lidar_ys < 1152),
+        ),
+        np.logical_and(lidar_zs >= 0, lidar_zs < 24),
     )
     lidar_xs = lidar_xs[indices]
     lidar_ys = lidar_ys[indices]
     lidar_zs = lidar_zs[indices]
     intensities = lidar_points[:, 3][indices]
 
-    lidar_image = np.zeros((1152, 1152, 24), np.float32)
-    np.maximum.at(lidar_image, (lidar_ys, lidar_xs, lidar_zs), intensities)
+    # lidar_image = np.zeros((1152, 1152, 24), np.float32)
+    # np.maximum.at(lidar_image, (lidar_ys, lidar_xs, lidar_zs), intensities)
+    lidar_image = max_at3(
+        np.zeros((1152, 1152, 24), np.float32),
+        lidar_ys,
+        lidar_xs,
+        lidar_zs,
+        intensities,
+        lidar_xs.shape[0],
+    )
 
-    input_image = lidar_image[np.newaxis]
+    input_image = np.expand_dims(lidar_image, 0)
     return input_image
 
 
@@ -51,21 +87,19 @@ def get_mask(pedestrian_fy, vehicle_fy):
         pedestrian_m,
         np.logical_and(
             np.logical_not(p_m),
-            np.logical_and(pedestrian_fy <= 0.29, pedestrian_fy > 0.009),
+            pedestrian_fy > 0.009,
         ),
     )
     vehicle_m = np.logical_or(
         vehicle_m,
-        np.logical_and(
-            np.logical_not(v_m),
-            np.logical_and(vehicle_fy <= 0.21, vehicle_fy > 0.07),
-        ),
+        np.logical_and(np.logical_not(v_m), vehicle_fy > 0.07),
     )
 
     return pedestrian_m.astype(np.uint8), vehicle_m.astype(np.uint8)
 
 
 def postprocess(pred, ego_pose, ego_pose_records, pred_records):
+    t0 = time()
     y = pred[0, 64:-64, 64:-64, :]
 
     if len(ego_pose_records) >= 2:
@@ -109,12 +143,13 @@ def postprocess(pred, ego_pose, ego_pose_records, pred_records):
             r1,
             (1024, 1024),
         )
-        m = np.stack([y, y0, y1], -1)
-        y = np.maximum(y, m.sum(-1) - m.max(-1) - m.min(-1))
+        y = merge3(y, y0, y1)
 
     pedestrian_fy = y[..., 0]
     vehicle_fy = y[..., 1]
+    t1 = time()
     pedestrian_m, vehicle_m = get_mask(pedestrian_fy, vehicle_fy)
+    t2 = time()
     (
         n_pedestrian,
         pedestrian_ccs,
@@ -137,16 +172,30 @@ def postprocess(pred, ego_pose, ego_pose_records, pred_records):
         ltype=cv2.CV_32S,
         ccltype=cv2.CCL_GRANA,
     )
+    t3 = time()
 
     pedestrian_centroid = pedestrian_centroid[:, [1, 0]]
     vehicle_centroid = vehicle_centroid[:, [1, 0]]
 
-    pedestrian_confidence = np.zeros([n_pedestrian])
-    np.maximum.at(
-        pedestrian_confidence,
+    # pedestrian_confidence = np.zeros([n_pedestrian])
+    t4 = time()
+    # print(pedestrian_confidence.shape, pedestrian_ccs.shape, pedestrian_fy.shape)
+    # np.maximum.at(
+    # pedestrian_confidence,
+    # np.reshape(pedestrian_ccs, [-1]),
+    # np.reshape(pedestrian_fy, [-1]),
+    # )
+    pedestrian_confidence = max_at(
+        np.zeros([n_pedestrian]),
         np.reshape(pedestrian_ccs, [-1]),
         np.reshape(pedestrian_fy, [-1]),
+        pedestrian_ccs.size,
     )
+    # for ccs, fy in zip(
+    # np.reshape(pedestrian_ccs, [-1]), np.reshape(pedestrian_fy, [-1])
+    # ):
+    # pedestrian_confidence[ccs] = fy
+    t5 = time()
     additional_indices = np.logical_and(
         _pedestrian_stats[1:, -1] > 78, pedestrian_confidence[1:] > 0.29
     )
@@ -154,6 +203,7 @@ def postprocess(pred, ego_pose, ego_pose_records, pred_records):
     additional_confidence = pedestrian_confidence[1:][additional_indices]  # * 0.99
     pedestrian_centroid = pedestrian_centroid[1:]
     pedestrian_confidence = pedestrian_confidence[1:]
+    t6 = time()
     if len(additional_centroid) > 0:
         pedestrian_centroid = np.concatenate(
             [pedestrian_centroid, additional_centroid], 0
@@ -161,15 +211,37 @@ def postprocess(pred, ego_pose, ego_pose_records, pred_records):
         pedestrian_confidence = np.concatenate(
             [pedestrian_confidence, additional_confidence], 0
         )
+    t7 = time()
 
-    vehicle_confidence = np.zeros([n_vehicle])
-    np.maximum.at(
-        vehicle_confidence,
+    # vehicle_confidence = np.zeros([n_vehicle])
+    # print(vehicle_confidence.shape, vehicle_ccs.shape, vehicle_fy.shape)
+    # np.maximum.at(
+    # vehicle_confidence,
+    # np.reshape(vehicle_ccs, [-1]),
+    # np.reshape(vehicle_fy, [-1]),
+    # )
+    vehicle_confidence = max_at(
+        np.zeros([n_vehicle]),
         np.reshape(vehicle_ccs, [-1]),
         np.reshape(vehicle_fy, [-1]),
+        vehicle_ccs.size,
     )
+    t8 = time()
     vehicle_centroid = vehicle_centroid[1:]
     vehicle_confidence = vehicle_confidence[1:]
+    t9 = time()
+    print(
+        "pp",
+        t1 - t0,
+        t2 - t1,
+        t3 - t2,
+        t4 - t3,
+        t5 - t4,
+        t6 - t5,
+        t7 - t6,
+        t8 - t7,
+        t9 - t8,
+    )
 
     return (
         pedestrian_centroid,
@@ -183,13 +255,13 @@ xir_graph = xir.Graph.deserialize(os.path.join("../models", "bev.xmodel"))
 xir_root_subgraph = xir_graph.get_root_subgraph()
 xir_child_subgraphs = xir_root_subgraph.toposort_child_subgraph()
 runner = vart.Runner.create_runner(xir_child_subgraphs[1], "run")
+iscale = runner.get_input_tensors()[0].get_attr("fix_point")
+oscale = runner.get_output_tensors()[0].get_attr("fix_point")
 
 
 def predict_tf(lidar_points, ego_pose, ego_pose_records, pred_records, summary=False):
     # for s in xir_child_subgraphs:
     # print(s.get_children())
-    iscale = runner.get_input_tensors()[0].get_attr("fix_point")
-    oscale = runner.get_output_tensors()[0].get_attr("fix_point")
     t0 = time()
     input_image = preprocess(lidar_points, 3.7)
     if summary:
@@ -205,7 +277,11 @@ def predict_tf(lidar_points, ego_pose, ego_pose_records, pred_records, summary=F
     t2 = time()
     # print(t3 - t2)
     pred = preds.astype(np.float32) / (2**oscale)
+    t3 = time()
     pred = 1 / (1 + np.exp(-pred))
+    t4 = time()
+    # pred = scale_and_sigmoid(preds, oscale)
+    # pred = scale_and_sigmoid(preds, oscale)
     (
         pedestrian_centroid,
         pedestrian_confidence,
@@ -214,8 +290,8 @@ def predict_tf(lidar_points, ego_pose, ego_pose_records, pred_records, summary=F
     ) = postprocess(pred, ego_pose, ego_pose_records, pred_records)
 
     pred_records.append(pred)
-    t3 = time()
-    print(t1 - t0, t2 - t1, t3 - t2)
+    t5 = time()
+    print(t1 - t0, t2 - t1, t3 - t2, t4 - t3, t5 - t4)
 
     if summary:
         pred_summary_image = np.concatenate(
