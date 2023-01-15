@@ -4,7 +4,7 @@ import numpy as np
 import cv2
 import logging
 
-# from time import time
+from time import time
 
 os.environ["TF_GPU_THREAD_MODE"] = "gpu_private"
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices"
@@ -32,6 +32,7 @@ def preprocess(lidar_points, z_offset=3.7):
         ),
         tf.math.logical_and(lidar_zs >= 0, lidar_zs < 24),
     )
+
     lidar_xs = tf.boolean_mask(lidar_xs, indices)
     lidar_ys = tf.boolean_mask(lidar_ys, indices)
     lidar_zs = tf.boolean_mask(lidar_zs, indices)
@@ -450,13 +451,13 @@ def preprocess3(lidar_points, z_offset1, z_offset2, z_offset3):
 def predict_tf(
     bev_model, lidar_points, ego_pose, ego_pose_records, pred_records, summary=False
 ):
-    # t0 = time()
+    t0 = time()
     # input_image = preprocess(lidar_points, 3.6)
     # input_image1 = preprocess(lidar_points, 4.4)
     # input_image2 = preprocess(lidar_points, 3.7)
     # input_image3 = preprocess(lidar_points, 3.0)
     input_image1, input_image2, input_image3 = preprocess3(lidar_points, 4.4, 3.7, 3.0)
-    # t1 = time()
+    t1 = time()
     if summary:
         input_summary_image1 = np.max(input_image1.numpy()[..., :-1], -1)[0][
             :, :, np.newaxis
@@ -479,6 +480,7 @@ def predict_tf(
             0,
         ),
     )["detector"]
+    t2 = time()
     pred = (
         # preds[:1]
         preds[0:1, :, ::-1, :]
@@ -499,10 +501,12 @@ def predict_tf(
         ),
         -1,
     )
+    t3 = time()
     pred = pred.numpy()
+    t4 = time()
     # pred[..., 0] = (pred[..., 0] * 5 + pred1[..., 0]) / 6
     pred[..., 1] = (pred[..., 1] + pred1[..., 1]) / 2
-    # t2 = time()
+    t5 = time()
     # print(pred)
     (
         pedestrian_centroid,
@@ -511,10 +515,24 @@ def predict_tf(
         vehicle_confidence,
     ) = postprocess(pred, ego_pose, ego_pose_records, pred_records)
 
+    suppress_predictions_without_lidar_points = False
+    if suppress_predictions_without_lidar_points:
+        input_intensities = tf.math.maximum(
+            input_image1, tf.math.maximum(input_image2, input_image3)
+        )
+        for n in range(pedestrian_centroid.shape[0]):
+            y, x = pedestrian_centroid[n]
+            y, x = round(y) + 64, round(x) + 64
+            points = tf.reduce_sum(
+                input_intensities[:, y - 7 : y + 7, x - 7 : x + 7, :]
+            )
+            if points == 0:
+                pedestrian_confidence[n] = pedestrian_confidence[n] * 0.1
+
     pred_records.append(pred)
 
-    # t3 = time()
-    # print(t1 - t0, t2 - t1, t3 - t2)
+    t6 = time()
+    print(t1 - t0, t2 - t1, t3 - t2, t4 - t3, t5 - t4, t6 - t5)
     if summary:
         pred_summary_image = np.concatenate(
             [pred[0], np.zeros((1152, 1152, 1), np.float32)], -1
