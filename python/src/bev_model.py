@@ -62,13 +62,13 @@ def conv2d_transpose(channels, ksize, strides, activation, x):
     return y
 
 
-def resblock(x, channels, ksize=3, dw=False, training=True):
+def resblock(x, channels, ksize=3, dw=False, training=True, activation="relu"):
     s = x
     if dw:
-        y = sep_conv2d(channels, ksize, (1, 1), ReLU(), x)
+        y = sep_conv2d(channels, ksize, (1, 1), ReLU(6), x)
         y = sep_conv2d(channels, ksize, (1, 1), None, y)
     else:
-        y = conv2d(channels, ksize, (1, 1), ReLU(), x)
+        y = conv2d(channels, ksize, (1, 1), ReLU(6), x)
         y = conv2d(channels, ksize, (1, 1), None, y)
     y = tf.keras.layers.Add()([s, y])
     y = ReLU()(y)
@@ -138,9 +138,9 @@ def clip(x, min_value, max_value):
 
 def get_pedestrian_detector_functional_model_small(x1, x2):
     x = UpSampling2D((2, 2))(x2)
-    x = sep_conv2d(32, 3, (1, 1), ReLU(6), x)
+    x = sep_conv2d(24, 3, (1, 1), ReLU(6), x)
     x = tf.keras.layers.Concatenate(-1)([x, x1])
-    x = resblock_v2(x, 64, 3, False)
+    x = resblock_v2(x, 48, 3, False)
     x = UpSampling2D((2, 2))(x)
     x = sep_conv2d(8, 3, (1, 1), ReLU(6), x)
     x = resblock_v2(x, 8, 3, False)
@@ -149,7 +149,7 @@ def get_pedestrian_detector_functional_model_small(x1, x2):
     return x
 
 
-def get_pedestrian_detector_layers_small():
+def get_base_detector_layers_small():
     return [
         "conv2d",
         "conv2d_1",
@@ -160,6 +160,25 @@ def get_pedestrian_detector_layers_small():
         "depthwise_conv2d",
         "depthwise_conv2d_1",
         "depthwise_conv2d_2",
+    ]
+
+
+def get_pedestrian_detector_layers_small():
+    return [
+        "conv2d_6",
+        "conv2d_7",
+        "conv2d_8",
+        "conv2d_9",
+        "conv2d_10",
+        "conv2d_11",
+        "conv2d_12",
+        "conv2d_13",
+        "conv2d_14",
+        "depthwise_conv2d_3",
+        "depthwise_conv2d_4",
+        "depthwise_conv2d_5",
+        "depthwise_conv2d_6",
+        "depthwise_conv2d_7",
     ]
 
 
@@ -175,6 +194,20 @@ def get_pedestrian_detector_functional_model_large(x):
     x = resblock_v2(x, 16, 3, False)
     x = conv2d(1, 3, (1, 1), None, x)
     return x
+
+
+def get_base_detector_layers_large():
+    return [
+        "conv2d",
+        "conv2d_1",
+        "conv2d_2",
+        "conv2d_3",
+        "conv2d_4",
+        "conv2d_5",
+        "depthwise_conv2d",
+        "depthwise_conv2d_1",
+        "depthwise_conv2d_2",
+    ]
 
 
 def get_pedestrian_detector_layers_large():
@@ -206,28 +239,35 @@ def get_pedestrian_detector_layers(model_size="small"):
         return get_pedestrian_detector_layers_large()
 
 
+def get_base_detector_layers(model_size="small"):
+    if model_size == "small":
+        return get_base_detector_layers_small()
+    else:
+        return get_base_detector_layers_large()
+
+
 def get_vehicle_detector_functional_model_small(x1, x2):
-    x = sep_conv2d(128, 3, (2, 2), ReLU(6), x2)
-    x3 = resblock_v2(x, 128, 3)
-    x = sep_conv2d(256, 3, (2, 2), ReLU(6), x3)
-    x = resblock_v2(x, 256, 3, False, activation="relu")
-    x4 = sep_conv2d(256, 3, (1, 1), ReLU(6), x)
+    x = sep_conv2d(96, 3, (2, 2), ReLU(6), x2)
+    x3 = resblock_v2(x, 96, 3)
+    x = sep_conv2d(192, 3, (2, 2), ReLU(6), x3)
+    x = resblock_v2(x, 192, 3, False, activation="relu")
+    x4 = sep_conv2d(192, 3, (1, 1), ReLU(6), x)
 
     x = UpSampling2D((2, 2))(x4)
-    x = sep_conv2d(128, 3, (1, 1), ReLU(6), x)
+    x = sep_conv2d(96, 3, (1, 1), ReLU(6), x)
     x = tf.keras.layers.Concatenate(-1)([x, x3])
-    x = sep_conv2d(128, 3, (1, 1), ReLU(6), x)
-    x = resblock_v2(x, 128, 3, False, activation="relu")
+    x = sep_conv2d(96, 3, (1, 1), ReLU(6), x)
+    x = resblock_v2(x, 96, 3, False, activation="relu")
     x = UpSampling2D((2, 2))(x)
-    x = sep_conv2d(64, 3, (1, 1), ReLU(6), x)
+    x = sep_conv2d(48, 3, (1, 1), ReLU(6), x)
     x = tf.keras.layers.Concatenate(-1)([x, x2])
-    x = sep_conv2d(64, 3, (1, 1), ReLU(6), x)
-    x = resblock_v2(x, 64, 3)
+    x = sep_conv2d(48, 3, (1, 1), ReLU(6), x)
+    x = resblock_v2(x, 48, 3)
 
     x = UpSampling2D((2, 2))(x)
-    x = sep_conv2d(32, 3, (1, 1), ReLU(6), x)
-    x = resblock_v2(x, 32, 3, False)
-    x = resblock_v2(x, 32, 3, False)
+    x = sep_conv2d(24, 3, (1, 1), ReLU(6), x)
+    x = resblock_v2(x, 24, 3, False)
+    x = resblock_v2(x, 24, 3, False)
 
     x = UpSampling2D((2, 2))(x)
     x = sep_conv2d(8, 3, (1, 1), ReLU(6), x)
@@ -271,10 +311,10 @@ def get_vehicle_detector_functional_model_large(x, include_last_activation=False
 
 
 def get_detector_functional_model_small(x):
-    x = conv2d(32, 5, (2, 2), ReLU(6), x)
-    x1 = resblock_v2(x, 32, 3, False)
-    x2 = sep_conv2d(64, 5, (2, 2), ReLU(6), x1)
-    x2 = resblock_v2(x2, 64, 3)
+    x = conv2d(24, 5, (2, 2), ReLU(6), x)
+    x1 = resblock_v2(x, 24, 3, False)
+    x2 = sep_conv2d(48, 5, (2, 2), ReLU(6), x1)
+    x2 = resblock_v2(x2, 48, 3)
     y_pedestrian = get_pedestrian_detector_functional_model_small(x1, x2)
     y_vehicle = get_vehicle_detector_functional_model_small(x1, x2)
     y = tf.keras.layers.Concatenate(-1)([y_pedestrian, y_vehicle])

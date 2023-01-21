@@ -48,6 +48,7 @@ def main():
 
     # run all and save the result
     result = {}
+    # count = 0
     for scene_id, frames in test_meta.items():
         print(scene_id)
         for frame in frames:
@@ -55,6 +56,9 @@ def main():
             frame["lidar_path"] = os.path.join(test_data_dir, frame["lidar_path"])
             output = ScoringService.predict(frame)
             result.update(output)
+            # count += 1
+            # if count > 1:
+                # break
 
     with open(result_path, "w", encoding="utf-8") as f:
         json.dump(result, f)

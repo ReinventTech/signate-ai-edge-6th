@@ -28,19 +28,30 @@ def sort_predictions(
         rem_pedestrian_preds.append(pred)
 
     rem_pedestrian_preds.sort(key=lambda x: x[0])
+    # np.set_printoptions(precision=6, floatmode="fixed", suppress=True)
     rem_pedestrian_preds = rem_pedestrian_preds[:55]
 
     lb, ub, d = 0.0, 1.0, 0.8
     m = (ub - lb) / d
+    t = 0
     while len(rem_pedestrian_preds) > 0 and len(pedestrian_preds) < 50:
+        t += 1
         rem_pedestrian_preds.sort(key=lambda x: x[0])
+        # if t == 3:
+        # for n in range(len(rem_pedestrian_preds)):
+        # print(np.float32(rem_pedestrian_preds[n]))
+        # print()
+        # if t == 4:
+        # for n in range(len(rem_pedestrian_preds)):
+        # print(np.float32(rem_pedestrian_preds[n]))
+        # exit()
         pred = rem_pedestrian_preds.pop(0)
         pedestrian_preds.append([pred[3], pred[4], -pred[0]])
         for n in prange(len(rem_pedestrian_preds)):
             dist = np.linalg.norm(rem_pedestrian_preds[n][3:5] - pred[3:5], ord=2)
             rem_pedestrian_preds[n][1] = min(dist, rem_pedestrian_preds[n][1])
-            if rem_pedestrian_preds[n][1] < 0.4:
-                r = 0.01
+            # if rem_pedestrian_preds[n][1] < 0.4:
+            # r = 0.01
             if rem_pedestrian_preds[n][1] == 0:
                 r = 1
             else:
@@ -157,12 +168,19 @@ class ScoringService(object):
             if len(bev_pedestrian_preds) > 0 and len(bev_vehicle_preds) > 0
             else ([], [])
         )
+        print("n", len(pedestrian_preds), len(vehicle_preds))
+        if cls.count == 0:
+            for n in range(len(vehicle_preds)):
+                print(vehicle_preds[n])
+        # exit()
 
         prediction = {}
         if len(pedestrian_preds) > 0:
             prediction["pedestrian"] = pedestrian_preds
         if len(vehicle_preds) > 0:
             prediction["vehicle"] = vehicle_preds
+
+        # print(prediction)
 
         # make output
         output = {input["test_key"]: prediction}

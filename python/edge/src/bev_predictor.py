@@ -15,9 +15,9 @@ def max_at(y, a, b, n):
     return y
 
 
-@njit(parallel=True)
+@njit  # (parallel=True)
 def max_at3(y, a, b, c, d, n):
-    for i in prange(n):
+    for i in range(n):
         y[a[i], b[i], c[i]] = max(y[a[i], b[i], c[i]], d[i])
     return y
 
@@ -28,9 +28,8 @@ def merge3(y0, y1, y2):
     return y
 
 
-@njit(parallel=True)
+@njit  # (parallel=True)
 def preprocess(lidar_points, iscale, z_offset=3.7):
-    # t0 = time()
     lidar_xs = ((lidar_points[:, 0] * 10 + 0.5)).astype(np.int32) + 576
     lidar_ys = ((-lidar_points[:, 1] * 10 + 0.5)).astype(np.int32) + 576
     lidar_zs = (((lidar_points[:, 2] + z_offset) * 5 + 0.5)).astype(np.int32)
@@ -46,9 +45,8 @@ def preprocess(lidar_points, iscale, z_offset=3.7):
     lidar_zs = lidar_zs[indices]
     intensities = np.clip(
         (lidar_points[:, 3][indices] * (2**iscale) + 0.5), -128, 127
-    ).astype(np.uint8)
+    ).astype(np.int8)
 
-    # t1 = time()
     lidar_image = max_at3(
         np.zeros((1152, 1152, 24), np.int8),
         lidar_ys,
@@ -59,21 +57,14 @@ def preprocess(lidar_points, iscale, z_offset=3.7):
     )
 
     input_image = np.expand_dims(lidar_image, 0)
-    # t2 = time()
-    # print("pre", t1 - t0, t2 - t1)
     return input_image
 
 
 @njit(parallel=True)
 def get_mask(pedestrian_fy, vehicle_fy):
     pedestrian_m = pedestrian_fy > 0.28
-    vehicle_m = vehicle_fy > 0.20
+    vehicle_m = vehicle_fy > 0.19
 
-    # p_m = np.pad(pedestrian_m, ((1, 1), (1, 1)))
-    # p_m = np.logical_or(
-    # np.logical_or(np.roll(p_m, 1, 0), np.roll(p_m, -1, 0)),
-    # np.logical_or(np.roll(p_m, 1, 1), np.roll(p_m, -1, 1)),
-    # )[1:-1, 1:-1]
     p_m = pedestrian_m.copy()
     for y in prange(1023):
         for x in prange(1024):
@@ -83,94 +74,87 @@ def get_mask(pedestrian_fy, vehicle_fy):
         for x in prange(1023):
             p_m[y, x] = p_m[y, x] or pedestrian_m[y, x + 1]
             p_m[y, x + 1] = p_m[y, x + 1] or pedestrian_m[y, x]
-    # v_m = np.pad(vehicle_m, ((4, 4), (4, 4)))
-    # v_m = np.logical_or(
-    # np.logical_or(np.roll(v_m, 4, 0), np.roll(v_m, -4, 0)),
-    # np.logical_or(np.roll(v_m, 4, 1), np.roll(v_m, -4, 1)),
-    # )[4:-4, 4:-4]
     v_m = vehicle_m.copy()
-    for y in prange(1023):
+    for y in prange(1021):
         for x in prange(1024):
-            v_m[y, x] = v_m[y, x] or vehicle_m[y + 1, x]
-            v_m[y + 1, x] = v_m[y + 1, x] or vehicle_m[y, x]
+            v_m[y, x] = v_m[y, x] or vehicle_m[y + 3, x]
+            v_m[y + 3, x] = v_m[y + 3, x] or vehicle_m[y, x]
     for y in prange(1024):
-        for x in prange(1023):
-            v_m[y, x] = v_m[y, x] or vehicle_m[y, x + 1]
-            v_m[y, x + 1] = v_m[y, x + 1] or vehicle_m[y, x]
+        for x in prange(1021):
+            v_m[y, x] = v_m[y, x] or vehicle_m[y, x + 3]
+            v_m[y, x + 3] = v_m[y, x + 3] or vehicle_m[y, x]
     pedestrian_m = np.logical_or(
         pedestrian_m,
         np.logical_and(
             np.logical_not(p_m),
-            pedestrian_fy > 0.009,
+            pedestrian_fy > 0.012,
         ),
     )
     vehicle_m = np.logical_or(
         vehicle_m,
-        np.logical_and(np.logical_not(v_m), vehicle_fy > 0.05),
+        np.logical_and(np.logical_not(v_m), vehicle_fy > 0.1),
     )
 
     return pedestrian_m.astype(np.uint8), vehicle_m.astype(np.uint8)
 
 
+def merge_prev_preds(pred, ego_pose, ego_pose_records, pred_records):
+    txyz0 = -np.array(ego_pose_records[-1]["translation"]) + np.array(
+        ego_pose["translation"]
+    )
+    txyz1 = -np.array(ego_pose_records[-2]["translation"]) + np.array(
+        ego_pose["translation"]
+    )
+    qt0 = (
+        quaternion.as_quat_array(ego_pose_records[-1]["rotation"])
+        * quaternion.as_quat_array(ego_pose["rotation"]).inverse()
+    ).inverse()
+    qt1 = (
+        quaternion.as_quat_array(ego_pose_records[-2]["rotation"])
+        * quaternion.as_quat_array(ego_pose["rotation"]).inverse()
+    ).inverse()
+    rot0 = quaternion.as_rotation_matrix(qt0)
+    rot1 = quaternion.as_rotation_matrix(qt1)
+    cos0 = rot0[0, 0]
+    sin0 = rot0[1, 0]
+    cos1 = rot1[0, 0]
+    sin1 = rot1[1, 0]
+    a0 = np.arctan2(sin0, cos0) * 180 / np.pi
+    a1 = np.arctan2(sin1, cos1) * 180 / np.pi
+
+    r0 = cv2.getRotationMatrix2D((512, 512), -a0, 1)
+    r0[0, 2] = r0[0, 2] - txyz0[0] * 10
+    r0[1, 2] = r0[1, 2] + txyz0[1] * 10
+    y0 = cv2.warpAffine(
+        pred_records[-1][0, 64:-64, 64:-64, :],
+        r0,
+        (1024, 1024),
+        flags=cv2.INTER_NEAREST,
+    )
+
+    r1 = cv2.getRotationMatrix2D((512, 512), -a1, 1)
+    r1[0, 2] = r1[0, 2] - txyz1[0] * 10
+    r1[1, 2] = r1[1, 2] + txyz1[1] * 10
+    y1 = cv2.warpAffine(
+        pred_records[-2][0, 64:-64, 64:-64, :],
+        r1,
+        (1024, 1024),
+        flags=cv2.INTER_NEAREST,
+    )
+    pred = merge3(pred, y0, y1)
+    return pred
+
+
 def postprocess(pred, ego_pose, ego_pose_records, pred_records):
-    t0 = time()
     y = pred[0, 64:-64, 64:-64, :]
 
-    if len(ego_pose_records) >= 2:
-        s0 = time()
-        txyz0 = -np.array(ego_pose_records[-1]["translation"]) + np.array(
-            ego_pose["translation"]
-        )
-        txyz1 = -np.array(ego_pose_records[-2]["translation"]) + np.array(
-            ego_pose["translation"]
-        )
-        qt0 = (
-            quaternion.as_quat_array(ego_pose_records[-1]["rotation"])
-            * quaternion.as_quat_array(ego_pose["rotation"]).inverse()
-        ).inverse()
-        qt1 = (
-            quaternion.as_quat_array(ego_pose_records[-2]["rotation"])
-            * quaternion.as_quat_array(ego_pose["rotation"]).inverse()
-        ).inverse()
-        rot0 = quaternion.as_rotation_matrix(qt0)
-        rot1 = quaternion.as_rotation_matrix(qt1)
-        cos0 = rot0[0, 0]
-        sin0 = rot0[1, 0]
-        cos1 = rot1[0, 0]
-        sin1 = rot1[1, 0]
-        a0 = np.arctan2(sin0, cos0) * 180 / np.pi
-        a1 = np.arctan2(sin1, cos1) * 180 / np.pi
-        s1 = time()
-
-        r0 = cv2.getRotationMatrix2D((512, 512), -a0, 1)
-        r0[0, 2] = r0[0, 2] - txyz0[0] * 10
-        r0[1, 2] = r0[1, 2] + txyz0[1] * 10
-        y0 = cv2.warpAffine(
-            pred_records[-1][0, 64:-64, 64:-64, :],
-            r0,
-            (1024, 1024),
-            flags=cv2.INTER_NEAREST,
-        )
-
-        r1 = cv2.getRotationMatrix2D((512, 512), -a1, 1)
-        r1[0, 2] = r1[0, 2] - txyz1[0] * 10
-        r1[1, 2] = r1[1, 2] + txyz1[1] * 10
-        y1 = cv2.warpAffine(
-            pred_records[-2][0, 64:-64, 64:-64, :],
-            r1,
-            (1024, 1024),
-            flags=cv2.INTER_NEAREST,
-        )
-        s2 = time()
-        y = merge3(y, y0, y1)
-        s3 = time()
-        print("s", s1 - s0, s2 - s1, s3 - s2)
+    if len(ego_pose_records) >= 2 and False:
+        y = merge_prev_preds(y, ego_pose, ego_pose_records, pred_records)
 
     pedestrian_fy = y[..., 0]
     vehicle_fy = y[..., 1]
-    t1 = time()
     pedestrian_m, vehicle_m = get_mask(pedestrian_fy, vehicle_fy)
-    t2 = time()
+    print("mask nonzero", np.count_nonzero(pedestrian_m), np.count_nonzero(vehicle_m))
     (
         n_pedestrian,
         pedestrian_ccs,
@@ -195,19 +179,16 @@ def postprocess(pred, ego_pose, ego_pose_records, pred_records):
         ccltype=cv2.CCL_GRANA,
     )
     vehicle_centroid = vehicle_centroid.astype(np.float32)
-    t3 = time()
 
     pedestrian_centroid = pedestrian_centroid[:, [1, 0]]
     vehicle_centroid = vehicle_centroid[:, [1, 0]]
 
-    t4 = time()
     pedestrian_confidence = max_at(
         np.zeros([n_pedestrian], np.float32),
         np.reshape(pedestrian_ccs, [-1]),
         np.reshape(pedestrian_fy, [-1]),
         pedestrian_ccs.size,
     )
-    t5 = time()
     additional_indices = np.logical_and(
         _pedestrian_stats[1:, -1] > 78, pedestrian_confidence[1:] > 0.28
     )
@@ -222,7 +203,6 @@ def postprocess(pred, ego_pose, ego_pose_records, pred_records):
         pedestrian_confidence = np.concatenate(
             [pedestrian_confidence, additional_confidence], 0
         )
-    t6 = time()
 
     vehicle_confidence = max_at(
         np.zeros([n_vehicle], np.float32),
@@ -230,21 +210,8 @@ def postprocess(pred, ego_pose, ego_pose_records, pred_records):
         np.reshape(vehicle_fy, [-1]),
         vehicle_ccs.size,
     )
-    t7 = time()
     vehicle_centroid = vehicle_centroid[1:]
     vehicle_confidence = vehicle_confidence[1:]
-    t8 = time()
-    print(
-        "pp",
-        t1 - t0,
-        t2 - t1,
-        t3 - t2,
-        t4 - t3,
-        t5 - t4,
-        t6 - t5,
-        t7 - t6,
-        t8 - t7,
-    )
 
     return (
         pedestrian_centroid,
@@ -294,36 +261,48 @@ def suppress_predictions_without_lidar_points(
 
 
 def predict_tf(lidar_points, ego_pose, ego_pose_records, pred_records, summary=False):
-    t0 = time()
+    # print("n_points", lidar_points.shape)
     input_image = preprocess(lidar_points, iscale, 3.7)
-    t1 = time()
+    # print("input nonzero =", np.count_nonzero(input_image))
     if summary:
         input_summary_image = np.max(input_image[..., :-1], -1)[0][:, :, np.newaxis]
         input_summary_image = np.tile(input_summary_image, (1, 1, 3))
     preds = np.ones((1, 1152, 1152, 2), np.int8)
-    t2 = time()
+    # t2 = time()
     job_id = runner.execute_async(input_image, preds)
+    # print("pred total", preds[0, :, :, 0].sum())
+    # exit()
     runner.wait(job_id)
-    t3 = time()
-    # pred = preds.astype(np.float32) / (2**oscale)
-    # pred = 1 / (1 + np.exp(-pred))
+    # g = 0
+    # for y in range(1152):
+    # for x in range(1152):
+    # g += int(preds[0, y, x, 0])
+    # print("pred total =", g)
+    # t3 = time()
+    # print("pred", t3 - t2)
     pred = sigmoid(preds, sigmoid_table)
-    t4 = time()
+    # g = np.float64(0)
+    # for y in range(1152):
+    # for x in range(1152):
+    # g += pred[0, y, x, 0]
+    # print("sigmoid total =", g)
     (
         pedestrian_centroid,
         pedestrian_confidence,
         vehicle_centroid,
         vehicle_confidence,
     ) = postprocess(pred, ego_pose, ego_pose_records, pred_records)
+    np.set_printoptions(precision=6, floatmode="fixed", suppress=True)
+    # print(
+    # np.concatenate([pedestrian_centroid, pedestrian_confidence[:, np.newaxis]], -1)
+    # )
+    # print("pp n", pedestrian_centroid.shape, vehicle_centroid.shape)
 
-    t5 = time()
     pedestrian_confidence = suppress_predictions_without_lidar_points(
         input_image, pedestrian_centroid, pedestrian_confidence
     )
 
     pred_records.append(pred)
-    t6 = time()
-    print(t1 - t0, t2 - t1, t3 - t2, t4 - t3, t5 - t4, t6 - t5)
 
     if summary:
         pred_summary_image = np.concatenate(
@@ -353,6 +332,7 @@ def predict(
     pred_records,
     summary=False,
 ):
+    print("iscale:", iscale, "oscale:", oscale)
 
     lidar_points = lidar.astype(np.float32)
     (
@@ -395,25 +375,25 @@ def predict(
     if len(pedestrian_centers) > 0:
         pedestrian_xyz = pedestrian_centers
         pedestrian_xyz[:, :2] = pedestrian_xyz[:, :2] / 10 - 51.2
-        # pedestrian_xyz[:, 2] = pedestrian_xyz[:, 2] / 5 + 1.5
         pedestrian_xyz[:, [0, 1]] = pedestrian_xyz[:, [1, 0]]
         pedestrian_xyz[:, 1] = -pedestrian_xyz[:, 1]
         pedestrian_xyz[:, :3] = quaternion.rotate_vectors(ego_qt, pedestrian_xyz[:, :3])
         pedestrian_xyz[:, :3] = pedestrian_xyz[:, :3] + ego_txyz[np.newaxis]
-        # pedestrian_xyz = list(pedestrian_xyz)
     else:
         pedestrian_xyz = []
 
     if len(vehicle_centers) > 0:
         vehicle_xyz = vehicle_centers
         vehicle_xyz[:, :2] = vehicle_xyz[:, :2] / 10 - 51.2
-        # vehicle_xyz[:, 2] = vehicle_xyz[:, 2] / 5 + 1.5
         vehicle_xyz[:, [0, 1]] = vehicle_xyz[:, [1, 0]]
         vehicle_xyz[:, 1] = -vehicle_xyz[:, 1]
         vehicle_xyz[:, :3] = quaternion.rotate_vectors(ego_qt, vehicle_xyz[:, :3])
         vehicle_xyz[:, :3] = vehicle_xyz[:, :3] + ego_txyz[np.newaxis]
-        # vehicle_xyz = list(vehicle_xyz)
     else:
         vehicle_xyz = []
+
+    # print(pedestrian_xyz)
+    # print(np.concatenate([pedestrian_xyz[:, :2], pedestrian_xyz[:, -1:]], -1))
+    # exit()
 
     return pedestrian_xyz, vehicle_xyz, summary_image

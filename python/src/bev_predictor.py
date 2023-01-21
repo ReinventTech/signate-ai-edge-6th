@@ -177,7 +177,7 @@ def merge3ex(x0, x1, x2, r1, r2):
     jit_compile=True,
 )
 def get_mask(pedestrian_fy, vehicle_fy):
-    pedestrian_m = pedestrian_fy > 0.29
+    pedestrian_m = pedestrian_fy > 0.30
     vehicle_m = vehicle_fy > 0.21
 
     p_m = tf.pad(pedestrian_m, ((1, 1), (1, 1)))
@@ -194,7 +194,7 @@ def get_mask(pedestrian_fy, vehicle_fy):
         pedestrian_m,
         tf.math.logical_and(
             tf.math.logical_not(p_m),
-            tf.math.logical_and(pedestrian_fy <= 0.29, pedestrian_fy > 0.009),
+            tf.math.logical_and(pedestrian_fy <= 0.30, pedestrian_fy > 0.009),
         ),
     )
     vehicle_m = tf.math.logical_or(
@@ -237,7 +237,7 @@ def refine(
         pedestrian_fy,
     )
     additional_indices = tf.math.logical_and(
-        pedestrian_area[1:] > 77, pedestrian_confidence[1:] > 0.29
+        pedestrian_area[1:] > 77, pedestrian_confidence[1:] > 0.30
     )
     additional_centroid = tf.boolean_mask(pedestrian_centroid[1:], additional_indices)
     additional_confidence = tf.boolean_mask(
@@ -532,7 +532,7 @@ def predict_tf(
     pred_records.append(pred)
 
     t6 = time()
-    print(t1 - t0, t2 - t1, t3 - t2, t4 - t3, t5 - t4, t6 - t5)
+    # print(t1 - t0, t2 - t1, t3 - t2, t4 - t3, t5 - t4, t6 - t5)
     if summary:
         pred_summary_image = np.concatenate(
             [pred[0], np.zeros((1152, 1152, 1), np.float32)], -1

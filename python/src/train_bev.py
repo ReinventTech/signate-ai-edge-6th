@@ -7,9 +7,9 @@ import tensorflow as tf
 import numpy as np
 import argparse
 import tensorflow_addons as tfa
-from bev_model import DetectorTrainer, get_pedestrian_detector_layers
+from bev_model import DetectorTrainer, get_base_detector_layers
 
-TRAIN_BATCH_SIZE = 48
+TRAIN_BATCH_SIZE = 64
 TEST_BATCH_SIZE = 8
 TRAIN_H, TRAIN_W = 256, 256
 TEST_H, TEST_W = 512, 512
@@ -319,10 +319,10 @@ def main():
     train_ds, test_ds = create_tf_dataset(args.dataset)
     detector = DetectorTrainer()
     if args.finetune:
-        pedestrian_layers = get_pedestrian_detector_layers(args.model_size)
-        for layer in pedestrian_layers:
+        base_layers = get_base_detector_layers(args.model_size)
+        for layer in base_layers:
             detector.detector.get_layer(layer).trainable = False
-    adabelief = tfa.optimizers.AdaBelief(learning_rate=1e-5, weight_decay=1e-4)
+    adabelief = tfa.optimizers.AdaBelief(learning_rate=1e-3, weight_decay=1e-4)
     detector.compile(
         loss=ce,
         optimizer=adabelief,
@@ -342,7 +342,7 @@ def main():
     ckpt_callback = tf.keras.callbacks.ModelCheckpoint(
         checkpoint_path,
         monitor="val_ce",
-        save_best_only=True,
+        # save_best_only=True,
         save_weights_only=True,
         verbose=1,
     )
@@ -369,7 +369,7 @@ def main():
         epochs=300,
         callbacks=[tb_callback, ckpt_callback, best_ckpt_callback, train_ckpt_callback],
         validation_data=test_ds,
-        validation_freq=5,
+        validation_freq=1,
     )
 
 

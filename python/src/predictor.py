@@ -168,7 +168,7 @@ class ScoringService(object):
         # print(cls.count, len(pedestrian_preds), len(vehicle_preds))
         cls.count += 1
         t3 = time()
-        print("root", t1 - t0, t2 - t1, t3 - t2)
+        # print("root", t1 - t0, t2 - t1, t3 - t2)
 
         if summary:
             import cv2

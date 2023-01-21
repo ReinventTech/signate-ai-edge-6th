@@ -62,11 +62,10 @@ cp -r /path/to/pp_model /project_root/python/models/pp_model
 ## Make predictions for the contest
 
 ```bash
-mkdir tmp
 # Modify the scenes list in make_meta.py if necessary
-python scripts/make_meta.py --data-dir /path/to/signate_data/train/3d_labels --output-path tmp
-python scripts/run.py --exec-path src --test-meta-path tmp/meta_data.json --test-data-dir /path/to/signate_data/train/3d_labels --result-path tmp/result.json 2>/dev/null
-python scripts/evaluate.py --ground-truth-path tmp/ans.json --predictions-path tmp/result.json
+python scripts/make_meta.py --data-dir /path/to/signate_data/train/3d_labels --output-path /path/to/evaluation
+python scripts/run.py --exec-path src --test-meta-path /path/to/evaluation/meta_data.json --test-data-dir /path/to/signate_data/train/3d_labels --result-path /path/to/evaluation/result.json 2>/dev/null
+python scripts/evaluate.py --ground-truth-path /path/to/evaluation/ans.json --predictions-path /path/to/evaluation/result.json
 ```
 
 ## Quantize/Compie a trained model for KV260
@@ -93,13 +92,12 @@ vai_c_tensorflow2 -m ./quantized_model.h5 -a /opt/vitis_ai/compiler/arch/DPUCZDX
 ## Make predictions on KV260
 
 Setup KV260 with DPU enabled.
-Assume that you have transferred the project directory to KV260 (/path/to/project_root/), as well as a partial dataset necessary for making predictions and evaluating them.
+Assume that you have transferred the project directory to KV260 (/path/to/project_root/), as well as a partial dataset (/path/to/dataset/3d_labels) necessary for making predictions and evaluating them.
 
 ```bash
 # On KV260
 cd /path/to/project_root/python/edge
-mkdir tmp
-# Run make_meta.py on your host machine in advance and put generated JSON files under the tmp directory.
-python scripts/run.py --exec-path src --test-meta-path tmp/meta_data.json --test-data-dir /path/to/dataset/3d_labels --result-path tmp/result.json
-python scripts/evaluate.py --ground-truth-path tmp/ans.json --predictions-path tmp/result.json
+# Run make_meta.py on your host machine in advance and put generated JSON files under a new directory "/path/to/evaluation".
+python scripts/run.py --exec-path src --test-meta-path /path/to/evaluation/meta_data.json --test-data-dir /path/to/dataset/3d_labels --result-path /path/to/evaluation/result.json
+python scripts/evaluate.py --ground-truth-path /path/to/evaluation/ans.json --predictions-path /path/to/evaluation/result.json
 ```
