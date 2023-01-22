@@ -1,7 +1,7 @@
 cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1
 CXX=${CXX:-g++}
 
-$CXX -O3 -I. \
+$CXX -O2 -I. \
      -I./riscv \
      -o bev -std=c++17 \
      $PWD/src/predictor.cpp \

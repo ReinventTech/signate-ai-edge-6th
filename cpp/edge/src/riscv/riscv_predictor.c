@@ -17,46 +17,48 @@ typedef char bool;
 #define true 1
 #define false 0
 
-long base_addr = 0x10000000;
+#define FUNC_PREPROCESS 0
+
+char* base_addr = (char*)0x10000000;
 signed char ZERO = 0;
 
-void* BUFFERS[N_BUFFERS] = {
-    (void*)0,
-    (void*)(10*1024*1024),
-    (void*)(20*1024*1024),
-    (void*)(30*1024*1024),
-    (void*)(40*1024*1024),
-    (void*)(50*1024*1024),
-    (void*)(60*1024*1024),
-    (void*)(70*1024*1024),
-    (void*)(80*1024*1024),
-    (void*)(90*1024*1024),
-    (void*)(100*1024*1024),
-    (void*)(110*1024*1024),
-    (void*)(120*1024*1024),
-    (void*)(130*1024*1024),
-    (void*)(140*1024*1024),
-    (void*)(150*1024*1024),
-    (void*)(160*1024*1024),
-    (void*)(170*1024*1024),
+unsigned int BUFFERS[N_BUFFERS] = {
+    0,
+    10*1024*1024,
+    20*1024*1024,
+    30*1024*1024,
+    40*1024*1024,
+    50*1024*1024,
+    60*1024*1024,
+    70*1024*1024,
+    80*1024*1024,
+    90*1024*1024,
+    100*1024*1024,
+    110*1024*1024,
+    120*1024*1024,
+    130*1024*1024,
+    140*1024*1024,
+    150*1024*1024,
+    160*1024*1024,
+    170*1024*1024,
 };
 bool* BUFFERS_AVAIL = 0;
-void* LIDAR_IMAGE_BUFFER = (void*)(180*1024*1024);
-void* RECORD_BUFFER = (void*)(220*1024*1024);
-void* RISCV_ARGS_BUFFER = (void*)(239*1024*1024);
+unsigned int LIDAR_IMAGE_BUFFER = 180*1024*1024;
+unsigned int RECORD_BUFFER = 220*1024*1024;
+unsigned int RISCV_ARGS_BUFFER = 239*1024*1024;
 
 void* alloc(){
     for(int i=0; i<N_BUFFERS; ++i){
         if(BUFFERS_AVAIL[i]){
             BUFFERS_AVAIL[i] = false;
-            return (void*)((long)BUFFERS[i]+base_addr);
+            return (void*)(base_addr + BUFFERS[i]);
         }
     }
     return 0;
 }
 
 void mfree(void* ptr){
-    int idx = ((long)ptr-base_addr) / (10*1024*1024);
+    int idx = ((unsigned int)ptr-(unsigned int)base_addr) / (10*1024*1024);
     BUFFERS_AVAIL[idx] = true;
 }
 
@@ -86,7 +88,7 @@ int8_t* preprocess(float* lidar_points, int n_points, float z_offset, int input_
         }
         offset += 5;
     }
-    int8_t* lidar_image = (int8_t*)((long)LIDAR_IMAGE_BUFFER+base_addr);
+    int8_t* lidar_image = (int8_t*)(base_addr + LIDAR_IMAGE_BUFFER);
     for(int i=0; i<LIDAR_IMAGE_HEIGHT*LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH; ++i){
         lidar_image[i] = ZERO;
     }
@@ -106,19 +108,19 @@ int main(void)
     REG(GPIO_BASE + 4) = 0; // 出力に設定
 	REG(GPIO_BASE) = 0;
 
-    volatile void* args = (volatile void*)(DMEM_BASE + (long)RISCV_ARGS_BUFFER);
+    volatile char* args = (volatile char*)(RISCV_ARGS_BUFFER + DMEM_BASE);
 
-    char* func_name = (char*)args;
+    unsigned int* func = (unsigned int*)args;
 
-    if(func_name=="preprocess"){
-        long* lidar_points_addr = (long*)((long)args + 64);
-        float* lidar_points = (float*)(DMEM_BASE + *lidar_points_addr);
-        int* n_points = (int*)((long)args + 72);
-        float* z_offset = (float*)((long)args + 80);
-        int* input_quant_scale = (int*)((long)args + 88);
+    if(*func==FUNC_PREPROCESS){
+        unsigned int* lidar_points_addr = (unsigned int*)(args + 64);
+        float* lidar_points = (float*)(*lidar_points_addr + DMEM_BASE);
+        int* n_points = (int*)(args + 72);
+        float* z_offset = (float*)(args + 80);
+        int* input_quant_scale = (int*)(args + 88);
         int8_t* lidar_image = preprocess(lidar_points, *n_points, *z_offset, *input_quant_scale);
-        long* lidar_image_addr = (long*)((long)args + 96);
-        *lidar_image_addr = (long)lidar_image;
+        long* lidar_image_addr = (long*)(args + 96);
+        *lidar_image_addr = (unsigned int)lidar_image - (unsigned int)base_addr;
     }
 
 	REG(GPIO_BASE) = 0x01; // 終了通知
