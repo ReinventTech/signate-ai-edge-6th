@@ -10,6 +10,9 @@ Assume that you have transferred the project directory to KV260 (/path/to/projec
 cd /path/to/project_root/cpp/edge
 # Run make_meta.py on your host machine in advance and put generated JSON files under a new directory "/path/to/evaluation".
 ./build.sh
-../scripts/run_edge.sh ./bev /path/to/evaluation/meta_data.json /path/to/dataset/3d_labels /path/to/evaluation/result.json /project_root/python/edge/models/bev.xmodel
+# For ARM
+../scripts/run_edge.sh ./bev /path/to/evaluation/meta_data.json /path/to/dataset/3d_labels /path/to/evaluation/result.json /project_root/python/edge/models/bev.xmodel 0
+# For RISC-V
+../scripts/run_edge.sh sudo\ ./bev /path/to/evaluation/meta_data.json /path/to/dataset/3d_labels /path/to/evaluation/result.json /project_root/python/edge/models/bev.xmodel 1
 python ../../python/scripts/evaluate.py --ground-truth-path /path/to/evaluation/ans.json --predictions-path /path/to/evaluation/result.json
 ```

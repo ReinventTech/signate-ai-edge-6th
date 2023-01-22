@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include <vart/mm/host_flat_tensor_buffer.hpp>
 #include <vart/runner.hpp>
 #include <xir/graph/graph.hpp>
@@ -8,6 +7,14 @@
 #include <memory>
 #include <chrono>
 #include <cmath>
+#include <cstring>
+#include <cstdio>
+#include <cstdlib>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <errno.h>
+#include <poll.h>
 #include "common.h"
 typedef char BOOL;
 typedef signed char int8_t;
@@ -15,13 +22,14 @@ typedef signed char int8_t;
 #define true 1
 #define false 0
 
-#define BUFFER_BASE_ADDR 0
 #define LIDAR_IMAGE_WIDTH 1152
 #define LIDAR_IMAGE_HEIGHT 1152
 #define LIDAR_IMAGE_DEPTH 24
-#define N_BUFFERS 24
+#define N_BUFFERS 18
+#define BUFFERS_AVAIL_ADDR_OFFSET 251658240 /* 240*1024*1024 */
 
 long long base_addr = 0;
+bool use_riscv = false;
 
 void* BUFFERS[N_BUFFERS] = {
     (void*)0,
@@ -42,19 +50,96 @@ void* BUFFERS[N_BUFFERS] = {
     (void*)(150*1024*1024),
     (void*)(160*1024*1024),
     (void*)(170*1024*1024),
-    (void*)(180*1024*1024),
-    (void*)(190*1024*1024),
-    (void*)(200*1024*1024),
-    (void*)(210*1024*1024),
-    (void*)(220*1024*1024),
-    (void*)(230*1024*1024),
 };
-bool BUFFERS_AVAIL[N_BUFFERS] = {
-    true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
-    true, true, true, true, true, true, true, true
-};
-void* LIDAR_IMAGE_BUFFER = (void*)(240*1024*1024);
-void* RECORD_BUFFER = (void*)(400*1024*1024);
+bool* BUFFERS_AVAIL = 0;
+void* LIDAR_IMAGE_BUFFER = (void*)(180*1024*1024);
+void* RECORD_BUFFER = (void*)(220*1024*1024);
+void* RISCV_ARGS_BUFFER = (void*)(239*1024*1024);
+
+void* iram = 0;
+void* dram = 0;
+void* gpio = 0;
+int ddr_fd = 0;
+struct pollfd pfd;
+
+#define REG(address) *(volatile unsigned int*)(address)
+#define REGF(address) *(volatile float*)(address)
+#define GPIO_BASE (0x80010000)
+#define IMEM_BASE (0x82000000)
+#define DMEM_BASE (0x10000000)
+
+unsigned int riscv_imm(unsigned int *IMEM);
+unsigned int riscv_dmm(unsigned int *DMEM);
+
+void setup_gpio_in();
+void setup_gpio_out();
+void wait_rising();
+
+
+/**
+ * gpio495の設定をする
+ */
+void setup_gpio_out()
+{
+    int fd;
+
+    // export gpio492
+    fd = open("/sys/class/gpio/export", O_WRONLY);
+    if (fd < 0) {
+        perror("failed to open gpio export");
+        exit(EXIT_FAILURE);
+    }
+    write(fd, "495", 4);
+    close(fd);
+
+    fd = open("/sys/class/gpio/gpio495/direction", O_WRONLY);
+    if (fd < 0) {
+        perror("failed to open gpio495 direction");
+        exit(EXIT_FAILURE);
+    }
+    write(fd, "out", 4);
+    close(fd);
+
+    fd = open("/sys/class/gpio/gpio495/value", O_WRONLY);
+    if (fd < 0) {
+        perror("failed to open gpio495 value");
+        exit(EXIT_FAILURE);
+    }
+    write(fd, "0", 2);
+    close(fd);
+}
+
+/**
+ * gpio500の設定をする
+ */
+void setup_gpio_in()
+{
+    int fd;
+
+    fd = open("/sys/class/gpio/export", O_WRONLY);
+    if (fd < 0) {
+        perror("failed to open gpio export");
+        exit(EXIT_FAILURE);
+    }
+    write(fd, "504", 4);
+    close(fd);
+
+    fd = open("/sys/class/gpio/gpio504/direction", O_WRONLY);
+    if (fd < 0) {
+        perror("failed to open gpio504 direction");
+        exit(EXIT_FAILURE);
+    }
+    write(fd, "in", 3);
+    close(fd);
+
+    fd = open("/sys/class/gpio/gpio504/edge", O_WRONLY);
+    if (fd < 0) {
+        perror("failed to open gpio504 edge");
+        exit(EXIT_FAILURE);
+    }
+    write(fd, "rising", 7);
+    close(fd);
+}
 
 void* alloc(){
     for(int i=0; i<N_BUFFERS; ++i){
@@ -69,6 +154,36 @@ void* alloc(){
 void mfree(void* ptr){
     int idx = ((long long)ptr-base_addr) / (10*1024*1024);
     BUFFERS_AVAIL[idx] = true;
+}
+
+int8_t* riscv_preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale){
+    void* riscv_args = (void*)((long)RISCV_ARGS_BUFFER + base_addr);
+    char* func_name = (char*)riscv_args;
+    std::strcpy(func_name, "preprocess");
+    long* arg_lidar_points = (long*)((long)riscv_args + 64);
+    *arg_lidar_points = (long)lidar_points;
+    int* arg_n_points = (int*)((long)riscv_args + 72);
+    *arg_n_points = n_points;
+    float* arg_z_offset = (float*)((long)riscv_args + 80);
+    *arg_z_offset = z_offset;
+    int* arg_input_quant_scale = (int*)((long)riscv_args + 88);
+    *arg_input_quant_scale = input_quant_scale;
+
+    // Run Program
+    REG(gpio) = 0x03; // LED1 + Reset off
+
+    // Wait Program end
+    poll(&pfd, 1, -1);
+    lseek(pfd.fd, 0, SEEK_SET);
+    char buf[1];
+    read(pfd.fd, buf, 1);
+
+  	REG(gpio) = 0x00; // Reset on
+
+    long* lidar_image_addr = (long*)((long)riscv_args + 96);
+    int8_t* lidar_image = (int8_t*)(*lidar_image_addr + base_addr);
+
+    return lidar_image;
 }
 
 int8_t* preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale){
@@ -773,10 +888,75 @@ void predict_scene(char* output_path, char* xmodel_path){
 
 
 int main(int argc, char* argv[]){
+    use_riscv = (strcmp(argv[3], "1") == 0);
+    void* heap = 0;
+    if(use_riscv){
+        char buf[1];
+        unsigned int IMEM[4096];
+
+        setup_gpio_in();
+        setup_gpio_out();
+
+        if ((ddr_fd = open("/dev/mem", O_RDWR | O_SYNC)) < 0) {
+            perror("open");
+            return -1;
+        }
+
+        iram = (unsigned int*)mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED, ddr_fd, IMEM_BASE);
+        if (iram == MAP_FAILED) {
+            perror("mmap iram");
+            close(ddr_fd);
+            return -1;
+        }
+
+        dram = (void*)mmap(NULL, 0x2000, PROT_READ | PROT_WRITE, MAP_SHARED, ddr_fd, DMEM_BASE);
+        base_addr = (long long)dram;
+        if (dram == MAP_FAILED) {
+            perror("mmap dram");
+            close(ddr_fd);
+            return -1;
+        }
+
+        gpio = (unsigned int*)mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED, ddr_fd, GPIO_BASE);
+        if (gpio == MAP_FAILED) {
+            perror("mmap gpio");
+            close(ddr_fd);
+            return -1;
+        }
+
+        pfd.events = POLLPRI;
+        pfd.fd = open("/sys/class/gpio/gpio504/value", O_RDONLY);
+        if (pfd.fd < 0) {
+            perror("failed to open gpio504 value");
+            exit(EXIT_FAILURE);
+        }
+
+        // 初回
+        poll(&pfd, 1, -1);
+        lseek(pfd.fd, 0, SEEK_SET);
+        read(pfd.fd, buf, 1);
+
+        // GPIO Direction
+        REG(gpio + 1) = 0x00;
+        REG(gpio) = 0x02; // LED0
+
+        // Write Program
+        unsigned int inum = riscv_imm(IMEM);
+        for(int i=0; i<inum; ++i){
+            REG(iram + i) = IMEM[i];
+        }
+    }
+    else{
+        heap = malloc(480*1024*1024);
+        base_addr = (long long)heap;
+    }
+
     char* output_path = argv[1];
     char* xmodel_path = argv[2];
-    void* heap = malloc(480*1024*1024);
-    base_addr = (long long)heap;
+    BUFFERS_AVAIL = (bool*)(base_addr + BUFFERS_AVAIL_ADDR_OFFSET);
+    for(int i=0; i<N_BUFFERS; ++i){
+        BUFFERS_AVAIL[i] = true;
+    }
     FILE* ofp = fopen(output_path, "w");
     fprintf(ofp, "{");
     fclose(ofp);
@@ -784,5 +964,12 @@ int main(int argc, char* argv[]){
     ofp = fopen(output_path, "a");
     fprintf(ofp, "}\n");
     fclose(ofp);
-    free(heap);
+
+    if(use_riscv){
+        close(ddr_fd);
+        close(pfd.fd);
+    }
+    else{
+        free(heap);
+    }
 }
