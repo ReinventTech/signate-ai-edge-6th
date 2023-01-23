@@ -37,9 +37,9 @@ main:     ファイル形式 elf32-littleriscv
 82000074:	00000f13          	li	t5,0
 82000078:	00000f93          	li	t6,0
 8200007c:	00000297          	auipc	t0,0x0
-82000080:	46028293          	add	t0,t0,1120 # 820004dc <_data_begin>
+82000080:	58828293          	add	t0,t0,1416 # 82000604 <_data_begin>
 82000084:	00000317          	auipc	t1,0x0
-82000088:	4a030313          	add	t1,t1,1184 # 82000524 <_data_end>
+82000088:	5c830313          	add	t1,t1,1480 # 8200064c <_data_end>
 8200008c:	02000397          	auipc	t2,0x2000
 82000090:	f7438393          	add	t2,t2,-140 # 84000000 <BUFFERS>
 82000094:	0140006f          	j	820000a8 <_start+0xa8>
@@ -49,9 +49,9 @@ main:     ファイル形式 elf32-littleriscv
 820000a4:	00438393          	add	t2,t2,4
 820000a8:	fe62e8e3          	bltu	t0,t1,82000098 <_start+0x98>
 820000ac:	00000297          	auipc	t0,0x0
-820000b0:	47828293          	add	t0,t0,1144 # 82000524 <_data_end>
+820000b0:	5a028293          	add	t0,t0,1440 # 8200064c <_data_end>
 820000b4:	00000317          	auipc	t1,0x0
-820000b8:	48030313          	add	t1,t1,1152 # 82000534 <_rodata_begin>
+820000b8:	5a830313          	add	t1,t1,1448 # 8200065c <_rodata_begin>
 820000bc:	02000397          	auipc	t2,0x2000
 820000c0:	f8c38393          	add	t2,t2,-116 # 84000048 <RISCV_ARGS_BUFFER>
 820000c4:	0140006f          	j	820000d8 <_start+0xd8>
@@ -61,9 +61,9 @@ main:     ファイル形式 elf32-littleriscv
 820000d4:	00438393          	add	t2,t2,4
 820000d8:	fe62e8e3          	bltu	t0,t1,820000c8 <_start+0xc8>
 820000dc:	00000297          	auipc	t0,0x0
-820000e0:	45828293          	add	t0,t0,1112 # 82000534 <_rodata_begin>
+820000e0:	58028293          	add	t0,t0,1408 # 8200065c <_rodata_begin>
 820000e4:	00000317          	auipc	t1,0x0
-820000e8:	46030313          	add	t1,t1,1120 # 82000544 <_init_array_begin>
+820000e8:	58c30313          	add	t1,t1,1420 # 82000670 <_init_array_begin>
 820000ec:	02000397          	auipc	t2,0x2000
 820000f0:	f6c38393          	add	t2,t2,-148 # 84000058 <_rodata_region>
 820000f4:	0140006f          	j	82000108 <_start+0x108>
@@ -73,11 +73,11 @@ main:     ファイル形式 elf32-littleriscv
 82000104:	00438393          	add	t2,t2,4
 82000108:	fe62e8e3          	bltu	t0,t1,820000f8 <_start+0xf8>
 8200010c:	00000297          	auipc	t0,0x0
-82000110:	43828293          	add	t0,t0,1080 # 82000544 <_init_array_begin>
+82000110:	56428293          	add	t0,t0,1380 # 82000670 <_init_array_begin>
 82000114:	00000317          	auipc	t1,0x0
-82000118:	43030313          	add	t1,t1,1072 # 82000544 <_init_array_begin>
+82000118:	55c30313          	add	t1,t1,1372 # 82000670 <_init_array_begin>
 8200011c:	02000397          	auipc	t2,0x2000
-82000120:	f4c38393          	add	t2,t2,-180 # 84000068 <ZERO>
+82000120:	f5038393          	add	t2,t2,-176 # 8400006c <ZERO>
 82000124:	0140006f          	j	82000138 <_start+0x138>
 82000128:	0002a403          	lw	s0,0(t0)
 8200012c:	0083a023          	sw	s0,0(t2)
@@ -85,17 +85,17 @@ main:     ファイル形式 elf32-littleriscv
 82000134:	00438393          	add	t2,t2,4
 82000138:	fe62e8e3          	bltu	t0,t1,82000128 <_start+0x128>
 8200013c:	02000297          	auipc	t0,0x2000
-82000140:	f2c28293          	add	t0,t0,-212 # 84000068 <ZERO>
+82000140:	f3028293          	add	t0,t0,-208 # 8400006c <ZERO>
 82000144:	02000317          	auipc	t1,0x2000
-82000148:	f2430313          	add	t1,t1,-220 # 84000068 <ZERO>
+82000148:	f2830313          	add	t1,t1,-216 # 8400006c <ZERO>
 8200014c:	00c0006f          	j	82000158 <_start+0x158>
 82000150:	0002a023          	sw	zero,0(t0)
 82000154:	00428293          	add	t0,t0,4
 82000158:	fe62ece3          	bltu	t0,t1,82000150 <_start+0x150>
 8200015c:	02000297          	auipc	t0,0x2000
-82000160:	f0c28293          	add	t0,t0,-244 # 84000068 <ZERO>
+82000160:	f1028293          	add	t0,t0,-240 # 8400006c <ZERO>
 82000164:	02000317          	auipc	t1,0x2000
-82000168:	f0c30313          	add	t1,t1,-244 # 84000070 <__global_pointer__>
+82000168:	f1030313          	add	t1,t1,-240 # 84000074 <__global_pointer__>
 8200016c:	00c0006f          	j	82000178 <_start+0x178>
 82000170:	0002a023          	sw	zero,0(t0)
 82000174:	00428293          	add	t0,t0,4
@@ -107,15 +107,15 @@ main:     ファイル形式 elf32-littleriscv
 8200018c:	84002137          	lui	sp,0x84002
 82000190:	00010113          	mv	sp,sp
 82000194:	840001b7          	lui	gp,0x84000
-82000198:	07018193          	add	gp,gp,112 # 84000070 <__global_pointer__>
-8200019c:	2d8000ef          	jal	82000474 <main>
+82000198:	07418193          	add	gp,gp,116 # 84000074 <__global_pointer__>
+8200019c:	3d0000ef          	jal	8200056c <main>
 820001a0:	00000013          	nop
 
 セクション .text の逆アセンブル:
 
 820001a4 <alloc>:
 820001a4:	840007b7          	lui	a5,0x84000
-820001a8:	06c7a603          	lw	a2,108(a5) # 8400006c <BUFFERS_AVAIL>
+820001a8:	0707a603          	lw	a2,112(a5) # 84000070 <BUFFERS_AVAIL>
 820001ac:	01200693          	li	a3,18
 820001b0:	00000793          	li	a5,0
 820001b4:	00f60733          	add	a4,a2,a5
@@ -144,13 +144,13 @@ main:     ファイル形式 elf32-littleriscv
 82000208:	00a007b7          	lui	a5,0xa00
 8200020c:	02f55533          	divu	a0,a0,a5
 82000210:	840007b7          	lui	a5,0x84000
-82000214:	06c7a783          	lw	a5,108(a5) # 8400006c <BUFFERS_AVAIL>
+82000214:	0707a783          	lw	a5,112(a5) # 84000070 <BUFFERS_AVAIL>
 82000218:	00a787b3          	add	a5,a5,a0
 8200021c:	00e78023          	sb	a4,0(a5)
 82000220:	00008067          	ret
 
 82000224 <preprocess>:
-82000224:	fd010113          	add	sp,sp,-48 # 84001fd0 <__global_pointer__+0x1f60>
+82000224:	fd010113          	add	sp,sp,-48 # 84001fd0 <__global_pointer__+0x1f5c>
 82000228:	02112623          	sw	ra,44(sp)
 8200022c:	00c12623          	sw	a2,12(sp)
 82000230:	02812423          	sw	s0,40(sp)
@@ -197,7 +197,7 @@ main:     ファイル形式 elf32-littleriscv
 820002d4:	00fa0a33          	add	s4,s4,a5
 820002d8:	000a0793          	mv	a5,s4
 820002dc:	00ea0733          	add	a4,s4,a4
-820002e0:	0685a603          	lw	a2,104(a1) # 84000068 <ZERO>
+820002e0:	06c5a603          	lw	a2,108(a1) # 8400006c <ZERO>
 820002e4:	00478793          	add	a5,a5,4
 820002e8:	fec7ae23          	sw	a2,-4(a5)
 820002ec:	fef71ae3          	bne	a4,a5,820002e0 <preprocess+0xbc>
@@ -299,33 +299,109 @@ main:     ファイル形式 elf32-littleriscv
 8200046c:	00458593          	add	a1,a1,4
 82000470:	e95ff06f          	j	82000304 <preprocess+0xe0>
 
-82000474 <main>:
-82000474:	ff010113          	add	sp,sp,-16
-82000478:	00812423          	sw	s0,8(sp)
-8200047c:	800307b7          	lui	a5,0x80030
-82000480:	00112623          	sw	ra,12(sp)
-82000484:	0007a223          	sw	zero,4(a5) # 80030004 <_start-0x1fcfffc>
-82000488:	0007a023          	sw	zero,0(a5)
-8200048c:	84000737          	lui	a4,0x84000
-82000490:	04872403          	lw	s0,72(a4) # 84000048 <RISCV_ARGS_BUFFER>
-82000494:	100007b7          	lui	a5,0x10000
-82000498:	00878433          	add	s0,a5,s0
-8200049c:	00042703          	lw	a4,0(s0)
-820004a0:	02071663          	bnez	a4,820004cc <main+0x58>
-820004a4:	04042503          	lw	a0,64(s0)
-820004a8:	05842683          	lw	a3,88(s0)
-820004ac:	05042603          	lw	a2,80(s0)
-820004b0:	04842583          	lw	a1,72(s0)
-820004b4:	00a78533          	add	a0,a5,a0
-820004b8:	d6dff0ef          	jal	82000224 <preprocess>
-820004bc:	840007b7          	lui	a5,0x84000
-820004c0:	0547a783          	lw	a5,84(a5) # 84000054 <base_addr>
-820004c4:	40f50533          	sub	a0,a0,a5
-820004c8:	06a42023          	sw	a0,96(s0)
-820004cc:	800307b7          	lui	a5,0x80030
-820004d0:	00100713          	li	a4,1
-820004d4:	00e7a023          	sw	a4,0(a5) # 80030000 <_start-0x1fd0000>
-820004d8:	0000006f          	j	820004d8 <main+0x64>
+82000474 <suppress_predictions_without_lidar_points>:
+82000474:	840007b7          	lui	a5,0x84000
+82000478:	05c7a707          	flw	fa4,92(a5) # 8400005c <_rodata_region+0x4>
+8200047c:	840007b7          	lui	a5,0x84000
+82000480:	0687a687          	flw	fa3,104(a5) # 84000068 <_rodata_region+0x10>
+82000484:	ff010113          	add	sp,sp,-16
+82000488:	00812623          	sw	s0,12(sp)
+8200048c:	00912423          	sw	s1,8(sp)
+82000490:	00000f13          	li	t5,0
+82000494:	00700393          	li	t2,7
+82000498:	47800413          	li	s0,1144
+8200049c:	48000293          	li	t0,1152
+820004a0:	00df4a63          	blt	t5,a3,820004b4 <suppress_predictions_without_lidar_points+0x40>
+820004a4:	00c12403          	lw	s0,12(sp)
+820004a8:	00812483          	lw	s1,8(sp)
+820004ac:	01010113          	add	sp,sp,16
+820004b0:	00008067          	ret
+820004b4:	0005a787          	flw	fa5,0(a1)
+820004b8:	00e7f7d3          	fadd.s	fa5,fa5,fa4
+820004bc:	c0079753          	fcvt.w.s	a4,fa5,rtz
+820004c0:	0045a787          	flw	fa5,4(a1)
+820004c4:	04070713          	add	a4,a4,64
+820004c8:	00e7f7d3          	fadd.s	fa5,fa5,fa4
+820004cc:	00070813          	mv	a6,a4
+820004d0:	c00797d3          	fcvt.w.s	a5,fa5,rtz
+820004d4:	04078793          	add	a5,a5,64
+820004d8:	00775463          	bge	a4,t2,820004e0 <suppress_predictions_without_lidar_points+0x6c>
+820004dc:	00700813          	li	a6,7
+820004e0:	ff980313          	add	t1,a6,-7
+820004e4:	00078813          	mv	a6,a5
+820004e8:	0077d463          	bge	a5,t2,820004f0 <suppress_predictions_without_lidar_points+0x7c>
+820004ec:	00700813          	li	a6,7
+820004f0:	ff980813          	add	a6,a6,-7
+820004f4:	00070893          	mv	a7,a4
+820004f8:	00e45463          	bge	s0,a4,82000500 <suppress_predictions_without_lidar_points+0x8c>
+820004fc:	47800893          	li	a7,1144
+82000500:	00788e13          	add	t3,a7,7
+82000504:	00078893          	mv	a7,a5
+82000508:	00f45463          	bge	s0,a5,82000510 <suppress_predictions_without_lidar_points+0x9c>
+8200050c:	47800893          	li	a7,1144
+82000510:	00788893          	add	a7,a7,7
+82000514:	03184663          	blt	a6,a7,82000540 <suppress_predictions_without_lidar_points+0xcc>
+82000518:	025787b3          	mul	a5,a5,t0
+8200051c:	00e787b3          	add	a5,a5,a4
+82000520:	00279793          	sll	a5,a5,0x2
+82000524:	00f607b3          	add	a5,a2,a5
+82000528:	0007a787          	flw	fa5,0(a5)
+8200052c:	10d7f7d3          	fmul.s	fa5,fa5,fa3
+82000530:	00f7a027          	fsw	fa5,0(a5)
+82000534:	001f0f13          	add	t5,t5,1
+82000538:	00858593          	add	a1,a1,8
+8200053c:	f65ff06f          	j	820004a0 <suppress_predictions_without_lidar_points+0x2c>
+82000540:	02580fb3          	mul	t6,a6,t0
+82000544:	00030e93          	mv	t4,t1
+82000548:	01f50fb3          	add	t6,a0,t6
+8200054c:	01cec663          	blt	t4,t3,82000558 <suppress_predictions_without_lidar_points+0xe4>
+82000550:	00180813          	add	a6,a6,1
+82000554:	fc1ff06f          	j	82000514 <suppress_predictions_without_lidar_points+0xa0>
+82000558:	01df84b3          	add	s1,t6,t4
+8200055c:	00048483          	lb	s1,0(s1)
+82000560:	fc904ae3          	bgtz	s1,82000534 <suppress_predictions_without_lidar_points+0xc0>
+82000564:	001e8e93          	add	t4,t4,1
+82000568:	fe5ff06f          	j	8200054c <suppress_predictions_without_lidar_points+0xd8>
+
+8200056c <main>:
+8200056c:	ff010113          	add	sp,sp,-16
+82000570:	00812423          	sw	s0,8(sp)
+82000574:	800307b7          	lui	a5,0x80030
+82000578:	00112623          	sw	ra,12(sp)
+8200057c:	0007a223          	sw	zero,4(a5) # 80030004 <_start-0x1fcfffc>
+82000580:	0007a023          	sw	zero,0(a5)
+82000584:	84000737          	lui	a4,0x84000
+82000588:	04872403          	lw	s0,72(a4) # 84000048 <RISCV_ARGS_BUFFER>
+8200058c:	100007b7          	lui	a5,0x10000
+82000590:	00878433          	add	s0,a5,s0
+82000594:	00042703          	lw	a4,0(s0)
+82000598:	02071e63          	bnez	a4,820005d4 <main+0x68>
+8200059c:	04042503          	lw	a0,64(s0)
+820005a0:	05842683          	lw	a3,88(s0)
+820005a4:	05042603          	lw	a2,80(s0)
+820005a8:	04842583          	lw	a1,72(s0)
+820005ac:	00a78533          	add	a0,a5,a0
+820005b0:	c75ff0ef          	jal	82000224 <preprocess>
+820005b4:	840007b7          	lui	a5,0x84000
+820005b8:	0547a783          	lw	a5,84(a5) # 84000054 <base_addr>
+820005bc:	40f50533          	sub	a0,a0,a5
+820005c0:	06a42023          	sw	a0,96(s0)
+820005c4:	800307b7          	lui	a5,0x80030
+820005c8:	00100713          	li	a4,1
+820005cc:	00e7a023          	sw	a4,0(a5) # 80030000 <_start-0x1fd0000>
+820005d0:	0000006f          	j	820005d0 <main+0x64>
+820005d4:	00100693          	li	a3,1
+820005d8:	fed716e3          	bne	a4,a3,820005c4 <main+0x58>
+820005dc:	84000737          	lui	a4,0x84000
+820005e0:	05042603          	lw	a2,80(s0)
+820005e4:	04842583          	lw	a1,72(s0)
+820005e8:	05072503          	lw	a0,80(a4) # 84000050 <LIDAR_IMAGE_BUFFER>
+820005ec:	05842683          	lw	a3,88(s0)
+820005f0:	00c78633          	add	a2,a5,a2
+820005f4:	00b785b3          	add	a1,a5,a1
+820005f8:	00a78533          	add	a0,a5,a0
+820005fc:	e79ff0ef          	jal	82000474 <suppress_predictions_without_lidar_points>
+82000600:	fc5ff06f          	j	820005c4 <main+0x58>
 
 セクション .data の逆アセンブル:
 
@@ -396,15 +472,17 @@ main:     ファイル形式 elf32-littleriscv
 84000062:	40a0                	.2byte	0x40a0
 84000064:	0000                	.2byte	0x0
 84000066:	42fe                	.2byte	0x42fe
+84000068:	cccd                	.2byte	0xcccd
+8400006a:	3dcc                	.2byte	0x3dcc
 
 セクション .sbss の逆アセンブル:
 
-84000068 <ZERO>:
-84000068:	0000                	.2byte	0x0
+8400006c <ZERO>:
+8400006c:	0000                	.2byte	0x0
 	...
 
-8400006c <BUFFERS_AVAIL>:
-8400006c:	0000                	.2byte	0x0
+84000070 <BUFFERS_AVAIL>:
+84000070:	0000                	.2byte	0x0
 	...
 
 セクション .comment の逆アセンブル:

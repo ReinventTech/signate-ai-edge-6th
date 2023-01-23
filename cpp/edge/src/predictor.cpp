@@ -28,6 +28,7 @@ typedef signed char int8_t;
 #define N_BUFFERS 18
 #define BUFFERS_AVAIL_ADDR_OFFSET 251658240 /* 240*1024*1024 */
 #define FUNC_PREPROCESS 0
+#define FUNC_SUPPRESS 1
 #define REG(address) *(volatile unsigned int*)(address)
 #define REGF(address) *(volatile float*)(address)
 #define GPIO_BASE (0x80010000)
@@ -169,6 +170,19 @@ void mfree(void* ptr){
     BUFFERS_AVAIL[idx] = true;
 }
 
+void run_riscv(){
+    // Run Program
+    REG(gpio) = 0x03; // LED1 + Reset off
+
+    // Wait Program end
+    poll(&pfd, 1, -1);
+    lseek(pfd.fd, 0, SEEK_SET);
+    char buf[1];
+    read(pfd.fd, buf, 1);
+
+    REG(gpio) = 0x00; // Reset on
+}
+
 int8_t* riscv_preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale){
     std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
     float* riscv_lidar_points = (float*)ralloc();
@@ -191,31 +205,24 @@ int8_t* riscv_preprocess(float* lidar_points, int n_points, float z_offset, int 
     int* arg_input_quant_scale = (int*)(riscv_args + 88);
     *arg_input_quant_scale = input_quant_scale;
 
-    // Run Program
-    REG(gpio) = 0x03; // LED1 + Reset off
-
     std::chrono::system_clock::time_point t2 = std::chrono::system_clock::now();
-    // Wait Program end
-    poll(&pfd, 1, -1);
-    lseek(pfd.fd, 0, SEEK_SET);
-    char buf[1];
-    read(pfd.fd, buf, 1);
-
-    REG(gpio) = 0x00; // Reset on
+    run_riscv();
     std::chrono::system_clock::time_point t3 = std::chrono::system_clock::now();
     double d1 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count() / 1000.0);
     printf("riscv time[ms]: %lf\n", d1);
 
     unsigned int* lidar_image_addr = (unsigned int*)(riscv_args + 96);
     int8_t* riscv_lidar_image = (int8_t*)(dram + *lidar_image_addr);
+    printf("lidar image addr: %ld\n", (long)*lidar_image_addr);
     int8_t* lidar_image = (int8_t*)(base_addr + LIDAR_IMAGE_BUFFER);
     unsigned long long* dst = (unsigned long long*)lidar_image;
     unsigned long long* src = (unsigned long long*)riscv_lidar_image;
     std::chrono::system_clock::time_point t4 = std::chrono::system_clock::now();
-    for(int i=0; i<1152*1152*24/8; ++i){
-        dst[i] = src[i];
-        //lidar_image[i] = riscv_lidar_image[i];
-    }
+    std::memcpy(dst, src, 1152*1152*24);
+    //for(int i=0; i<1152*1152*24/8; ++i){
+        //dst[i] = src[i];
+        ////lidar_image[i] = riscv_lidar_image[i];
+    //}
     std::chrono::system_clock::time_point t5 = std::chrono::system_clock::now();
     double d2 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t5 - t4).count() / 1000.0);
     printf("copy2 time[ms]: %lf\n", d2);
@@ -278,7 +285,50 @@ float* sigmoid(int* pred, int output_quant_scale){
     return sigmoid_pred;
 }
 
+void riscv_suppress_predictions_without_lidar_points(int8_t* input_image, float* centroid, float* confidence, int n_preds){
+    std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
+
+    volatile float* riscv_centroid = (volatile float*)ralloc();
+    volatile float* riscv_confidence = (volatile float*)ralloc();
+
+    for(int i=0; i<n_preds*2; ++i){
+        riscv_centroid[i] = centroid[i];
+    }
+    for(int i=0; i<n_preds; ++i){
+        riscv_confidence[i] = confidence[i];
+    }
+
+    char* riscv_args = 
+        (char*)(dram + RISCV_ARGS_BUFFER);
+    unsigned int* func = (unsigned int*)riscv_args;
+    *func = FUNC_SUPPRESS;
+    unsigned int* arg_centroid = (unsigned int*)(riscv_args + 72);
+    *arg_centroid = (long)riscv_centroid - (long)dram;
+    unsigned int* arg_confidence = (unsigned int*)(riscv_args + 80);
+    *arg_confidence = (long)riscv_confidence - (long)dram;
+    int* arg_n_preds = (int*)(riscv_args + 88);
+    *arg_n_preds = n_preds;
+
+    run_riscv();
+
+    for(int i=0; i<n_preds; ++i){
+        confidence[i] = riscv_confidence[i];
+    }
+
+    rfree((float*)riscv_centroid);
+    rfree((float*)riscv_confidence);
+    std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
+    double d0 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0);
+    printf("riscv suppress time[ms]: %lf\n", d0);
+}
+
 void suppress_predictions_without_lidar_points(int8_t* input_image, float* centroid, float* confidence, int n_preds){
+    if(use_riscv){
+        riscv_suppress_predictions_without_lidar_points(
+            input_image, centroid, confidence, n_preds
+        );
+        return;
+    }
     for(int i=0; i<n_preds; ++i){
         int x = (int)(centroid[i*2]+0.5) + 64;
         int y = (int)(centroid[i*2+1]+0.5) + 64;
@@ -372,13 +422,8 @@ bool FALSE = false;
 void cca(float* p, BOOL* m, int* n_centroids, float* scores, int* areas, float* centroids){
     std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
     BOOL* checked = (BOOL*)alloc();
-    //std::memset(checked, FALSE, 1024*1024);
-    for(int i=0; i<1024*1024; ++i){
-        checked[i] = FALSE;
-    }
-    std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
-    double d0 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0);
-    printf("checked init time[ms]: %lf\n", d0);
+    unsigned long long* dst = (unsigned long long*)checked;
+    std::memset(dst, 0, 1024*1024);
     *n_centroids = 0;
     int* coords = (int*)alloc();
     for(int y=0; y<1024; ++y){

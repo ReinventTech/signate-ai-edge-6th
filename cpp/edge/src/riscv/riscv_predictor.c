@@ -18,6 +18,7 @@ typedef char bool;
 #define false 0
 
 #define FUNC_PREPROCESS 0
+#define FUNC_SUPPRESS 1
 
 char* base_addr = (char*)0x10000000;
 unsigned int BUFFERS[N_BUFFERS] = {
@@ -60,6 +61,7 @@ void mfree(void* ptr){
     BUFFERS_AVAIL[idx] = true;
 }
 
+/* Use this to initialize lidar_image, avoiding memset */
 unsigned int ZERO = 0;
 
 int8_t* preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale){
@@ -104,6 +106,31 @@ int8_t* preprocess(float* lidar_points, int n_points, float z_offset, int input_
     return lidar_image;
 }
 
+void suppress_predictions_without_lidar_points(int8_t* input_image, float* centroid, float* confidence, int n_preds){
+    for(int i=0; i<n_preds; ++i){
+        int x = (int)(centroid[i*2]+0.5f) + 64;
+        int y = (int)(centroid[i*2+1]+0.5f) + 64;
+        bool has_points = false;
+        int sx = x>7? (x-7) : 0;
+        int sy = y>7? (y-7) : 0;
+        int ex = x<LIDAR_IMAGE_WIDTH-7? (x+7) : (LIDAR_IMAGE_WIDTH-1);
+        int ey = y<LIDAR_IMAGE_HEIGHT-7? (y+7) : (LIDAR_IMAGE_HEIGHT-1);
+        for(int ry=sy; ry<ey; ++ry){
+            int offset = ry * LIDAR_IMAGE_WIDTH;
+            for(int rx=sx; rx<ex; ++rx){
+                if(input_image[offset+rx]>0){
+                    has_points = true;
+                    break;
+                }
+            }
+            if(has_points) break;
+        }
+        if(has_points==0){
+            confidence[y*(LIDAR_IMAGE_WIDTH)+x] *= 0.1f;
+        }
+    }
+}
+
 int main(void)
 {
     REG(GPIO_BASE + 4) = 0; // 出力に設定
@@ -122,6 +149,19 @@ int main(void)
         int8_t* lidar_image = preprocess(lidar_points, *n_points, *z_offset, *input_quant_scale);
         long* lidar_image_addr = (long*)(args + 96);
         *lidar_image_addr = (unsigned int)lidar_image - (unsigned int)base_addr;
+    }
+    else if(*func==FUNC_SUPPRESS){
+        /*unsigned int* input_image_addr = (unsigned int*)(args + 64);*/
+        /*int8_t* input_image = (int8_t*)(*input_image_addr + DMEM_BASE);*/
+        int8_t* input_image = (int8_t*)(LIDAR_IMAGE_BUFFER + DMEM_BASE);
+        unsigned int* centroid_addr = (unsigned int*)(args + 72);
+        float* centroid = (float*)(*centroid_addr + DMEM_BASE);
+        unsigned int* confidence_addr = (unsigned int*)(args + 80);
+        float* confidence = (float*)(*confidence_addr + DMEM_BASE);
+        int* n_preds = (int*)(args + 88);
+        suppress_predictions_without_lidar_points(
+            input_image, centroid, confidence, *n_preds
+        );
     }
 
 	REG(GPIO_BASE) = 0x01; // 終了通知
