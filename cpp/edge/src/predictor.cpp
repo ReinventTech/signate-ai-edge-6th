@@ -20,8 +20,8 @@
 typedef char BOOL;
 typedef signed char int8_t;
 
-#define true 1
-#define false 0
+//#define true 1
+//#define false 0
 #define LIDAR_IMAGE_WIDTH 1152
 #define LIDAR_IMAGE_HEIGHT 1152
 #define LIDAR_IMAGE_DEPTH 24
@@ -35,7 +35,7 @@ typedef signed char int8_t;
 #define DMEM_BASE (0x10000000)
 
 
-volatile char* base_addr = 0;
+char* base_addr = 0;
 bool use_riscv = false;
 uintptr_t BUFFERS[N_BUFFERS] = {
     0,
@@ -58,11 +58,12 @@ uintptr_t BUFFERS[N_BUFFERS] = {
     170*1024*1024,
 };
 volatile bool* BUFFERS_AVAIL = 0;
+volatile bool* RISCV_BUFFERS_AVAIL = 0;
 uintptr_t LIDAR_IMAGE_BUFFER = 180*1024*1024;
 uintptr_t RECORD_BUFFER = 220*1024*1024;
 uintptr_t RISCV_ARGS_BUFFER = 239*1024*1024;
 volatile unsigned int* iram = 0;
-volatile char* dram = 0;
+char* dram = 0;
 volatile unsigned int* gpio = 0;
 int ddr_fd = 0;
 struct pollfd pfd;
@@ -138,28 +139,51 @@ void setup_gpio_in(){
     close(fd);
 }
 
-volatile void* alloc(){
+void* ralloc(){
     for(int i=0; i<N_BUFFERS; ++i){
-        if(BUFFERS_AVAIL[i]){
-            BUFFERS_AVAIL[i] = false;
-            return (volatile void*)(base_addr + BUFFERS[i]);
+        if(RISCV_BUFFERS_AVAIL[i]){
+            RISCV_BUFFERS_AVAIL[i] = false;
+            return (void*)(dram + BUFFERS[i]);
         }
     }
     return 0;
 }
 
-void mfree(volatile void* ptr){
+void rfree(void* ptr){
+    int idx = ((uintptr_t)ptr-(uintptr_t)dram) / (10*1024*1024);
+    RISCV_BUFFERS_AVAIL[idx] = true;
+}
+
+void* alloc(){
+    for(int i=0; i<N_BUFFERS; ++i){
+        if(BUFFERS_AVAIL[i]){
+            BUFFERS_AVAIL[i] = false;
+            return (void*)(base_addr + BUFFERS[i]);
+        }
+    }
+    return 0;
+}
+
+void mfree(void* ptr){
     int idx = ((uintptr_t)ptr-(uintptr_t)base_addr) / (10*1024*1024);
     BUFFERS_AVAIL[idx] = true;
 }
 
 int8_t* riscv_preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale){
+    std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
+    float* riscv_lidar_points = (float*)ralloc();
+    for(int i=0; i<n_points*5; ++i){
+        riscv_lidar_points[i] = lidar_points[i];
+    }
+    std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
+    double d0 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0);
+    printf("copy1 time[ms]: %lf\n", d0);
     char* riscv_args = 
         (char*)(dram + RISCV_ARGS_BUFFER);
     unsigned int* func = (unsigned int*)riscv_args;
     *func = FUNC_PREPROCESS;
     unsigned int* arg_lidar_points = (unsigned int*)(riscv_args + 64);
-    *arg_lidar_points = (long)lidar_points - (long)dram;
+    *arg_lidar_points = (long)riscv_lidar_points - (long)dram;
     int* arg_n_points = (int*)(riscv_args + 72);
     *arg_n_points = n_points;
     float* arg_z_offset = (float*)(riscv_args + 80);
@@ -170,6 +194,7 @@ int8_t* riscv_preprocess(float* lidar_points, int n_points, float z_offset, int 
     // Run Program
     REG(gpio) = 0x03; // LED1 + Reset off
 
+    std::chrono::system_clock::time_point t2 = std::chrono::system_clock::now();
     // Wait Program end
     poll(&pfd, 1, -1);
     lseek(pfd.fd, 0, SEEK_SET);
@@ -177,9 +202,24 @@ int8_t* riscv_preprocess(float* lidar_points, int n_points, float z_offset, int 
     read(pfd.fd, buf, 1);
 
     REG(gpio) = 0x00; // Reset on
+    std::chrono::system_clock::time_point t3 = std::chrono::system_clock::now();
+    double d1 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count() / 1000.0);
+    printf("riscv time[ms]: %lf\n", d1);
 
     unsigned int* lidar_image_addr = (unsigned int*)(riscv_args + 96);
-    int8_t* lidar_image = (int8_t*)(dram + *lidar_image_addr);
+    int8_t* riscv_lidar_image = (int8_t*)(dram + *lidar_image_addr);
+    int8_t* lidar_image = (int8_t*)(base_addr + LIDAR_IMAGE_BUFFER);
+    unsigned long long* dst = (unsigned long long*)lidar_image;
+    unsigned long long* src = (unsigned long long*)riscv_lidar_image;
+    std::chrono::system_clock::time_point t4 = std::chrono::system_clock::now();
+    for(int i=0; i<1152*1152*24/8; ++i){
+        dst[i] = src[i];
+        //lidar_image[i] = riscv_lidar_image[i];
+    }
+    std::chrono::system_clock::time_point t5 = std::chrono::system_clock::now();
+    double d2 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t5 - t4).count() / 1000.0);
+    printf("copy2 time[ms]: %lf\n", d2);
+    rfree(riscv_lidar_points);
 
     return lidar_image;
 }
@@ -327,11 +367,18 @@ BOOL* get_vehicle_mask(float* vehicle_fy){
     return vehicle_m;
 }
 
+bool FALSE = false;
+
 void cca(float* p, BOOL* m, int* n_centroids, float* scores, int* areas, float* centroids){
-    volatile BOOL* checked = (volatile BOOL*)alloc();
+    std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
+    BOOL* checked = (BOOL*)alloc();
+    //std::memset(checked, FALSE, 1024*1024);
     for(int i=0; i<1024*1024; ++i){
-        checked[i] = false;
+        checked[i] = FALSE;
     }
+    std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
+    double d0 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0);
+    printf("checked init time[ms]: %lf\n", d0);
     *n_centroids = 0;
     int* coords = (int*)alloc();
     for(int y=0; y<1024; ++y){
@@ -717,7 +764,7 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
     int8_t* input_image = preprocess(lidar_points, n_points, 3.7, input_quant_scale);
     std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
 
-    volatile int8_t* quant_pred = (volatile int8_t*)alloc();
+    int8_t* quant_pred = (int8_t*)alloc();
     run_dpu(runner, (int8_t*)input_image, (int8_t*)quant_pred);
     std::chrono::system_clock::time_point t2 = std::chrono::system_clock::now();
 
@@ -901,6 +948,7 @@ int main(int argc, char* argv[]){
         setup_gpio_in();
         setup_gpio_out();
 
+        //if((ddr_fd = open("/dev/mem", O_RDWR)) < 0){
         if((ddr_fd = open("/dev/mem", O_RDWR | O_SYNC)) < 0){
             perror("open");
             return -1;
@@ -914,7 +962,7 @@ int main(int argc, char* argv[]){
         }
 
         dram = (char*)mmap(NULL, 0x10000000, PROT_READ | PROT_WRITE, MAP_SHARED, ddr_fd, DMEM_BASE);
-        base_addr = (volatile char*)dram;
+        //base_addr = (char*)dram;
         if(dram == MAP_FAILED){
             perror("mmap dram");
             close(ddr_fd);
@@ -949,10 +997,12 @@ int main(int argc, char* argv[]){
         for(int i=0; i<inum; ++i){
             REG(iram + i) = IMEM[i];
         }
+        heap = malloc(256*1024*1024);
+        base_addr = (char*)heap;
     }
     else{
         heap = malloc(256*1024*1024);
-        base_addr = (volatile char*)heap;
+        base_addr = (char*)heap;
     }
 
     char* output_path = argv[1];
@@ -960,6 +1010,12 @@ int main(int argc, char* argv[]){
     BUFFERS_AVAIL = (volatile bool*)(base_addr + BUFFERS_AVAIL_ADDR_OFFSET);
     for(int i=0; i<N_BUFFERS; ++i){
         BUFFERS_AVAIL[i] = true;
+    }
+    if(use_riscv){
+        RISCV_BUFFERS_AVAIL = (volatile bool*)(dram + BUFFERS_AVAIL_ADDR_OFFSET);
+        for(int i=0; i<N_BUFFERS; ++i){
+            RISCV_BUFFERS_AVAIL[i] = true;
+        }
     }
 
     FILE* ofp = fopen(output_path, "w");

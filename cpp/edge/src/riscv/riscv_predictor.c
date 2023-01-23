@@ -20,8 +20,6 @@ typedef char bool;
 #define FUNC_PREPROCESS 0
 
 char* base_addr = (char*)0x10000000;
-signed char ZERO = 0;
-
 unsigned int BUFFERS[N_BUFFERS] = {
     0,
     10*1024*1024,
@@ -62,6 +60,8 @@ void mfree(void* ptr){
     BUFFERS_AVAIL[idx] = true;
 }
 
+unsigned int ZERO = 0;
+
 int8_t* preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale){
     int* lidar_xs = (int*)alloc();
     int* lidar_ys = (int*)alloc();
@@ -89,8 +89,9 @@ int8_t* preprocess(float* lidar_points, int n_points, float z_offset, int input_
         offset += 5;
     }
     int8_t* lidar_image = (int8_t*)(base_addr + LIDAR_IMAGE_BUFFER);
-    for(int i=0; i<LIDAR_IMAGE_HEIGHT*LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH; ++i){
-        lidar_image[i] = ZERO;
+    unsigned int* tmp = (unsigned int*)lidar_image;
+    for(int i=0; i<LIDAR_IMAGE_HEIGHT*LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH/4; ++i){
+        tmp[i] = ZERO;
     }
     for(int i=0; i<n_valid_points; ++i){
         int offset = lidar_ys[i]*LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH + lidar_xs[i]*LIDAR_IMAGE_DEPTH + lidar_zs[i];

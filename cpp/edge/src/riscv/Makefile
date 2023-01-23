@@ -3,7 +3,6 @@ CFLAGS := -Os -Wno-implicit
 CFLAGS += -fno-builtin-printf -fno-common
 
 SRC = riscv_predictor.c start.s
-#SRC = mem_rw.c start.s
 HDR = 
 LDFLAGS := -std=gnu99 -static -lgcc -Tlinker.ld -march=rv32imf -mabi=ilp32 -Wa,-march=rv32imf -nostartfiles
 
