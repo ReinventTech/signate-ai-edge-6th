@@ -832,13 +832,13 @@ void run_dpu(vart::Runner* runner, int8_t* input_image, int8_t* pred){
 
 void update_records(int frame_idx, float* pedestrian_pred, float* vehicle_pred, float ego_translation[3], float ego_rotation[4], float* records){
     int record_offset = (frame_idx%2) * (1024*1024*2+8);
-    for(int i=0; i<1024*1024; ++i){
-        records[i+record_offset] = pedestrian_pred[i];
-    }
+    unsigned long long* src = (unsigned long long*)pedestrian_pred;
+    unsigned long long* dst = (unsigned long long*)(records+record_offset);
+    std::memcpy(dst, src, 1024*1024*4);
     record_offset += 1024 * 1024;
-    for(int i=0; i<1024*1024; ++i){
-        records[i+record_offset] = vehicle_pred[i];
-    }
+    src = (unsigned long long*)vehicle_pred;
+    dst = (unsigned long long*)(records+record_offset);
+    std::memcpy(dst, src, 1024*1024*4);
     record_offset += 1024 * 1024;
     records[record_offset] = ego_translation[0];
     records[record_offset+1] = ego_translation[1];
@@ -892,7 +892,6 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
     postprocess(pedestrian_pred, vehicle_pred, pedestrian_centroids, pedestrian_confidence, n_pedestrians, vehicle_centroids, vehicle_confidence, n_vehicles, frame_idx, records);
     std::chrono::system_clock::time_point t5 = std::chrono::system_clock::now();
 
-    // update records
     update_records(frame_idx, pedestrian_pred, vehicle_pred, ego_translation, ego_rotation, records);
 
     mfree(pedestrian_pred);
