@@ -65,37 +65,43 @@ void mfree(void* ptr){
 unsigned int ZERO = 0;
 
 void preprocess(volatile float* lidar_points, volatile int* n_points, float z_offset, int input_quant_scale, volatile int* offsets, volatile int8_t* intensities){
-    int* lidar_xs = (int*)alloc();
-    int* lidar_ys = (int*)alloc();
-    int* lidar_zs = (int*)alloc();
-    int offset = 0;
+    int* lidar_coords = (int*)alloc();
+    int* lidar_xs = lidar_coords;
+    int* lidar_ys = lidar_xs + 1;
+    int* lidar_zs = lidar_xs + 2;
+    int* xs = lidar_xs;
+    int* ys = lidar_ys;
+    int* zs = lidar_zs;
     int n_valid_points = 0;
     float scale = (float)(1 << input_quant_scale);
     for(int i=0; i<*n_points; ++i){
-        int x = (int)(lidar_points[offset]*10.0f+0.5f) + 576;
-        int y = (int)(-lidar_points[offset+1]*10.0f+0.5f) + 576;
-        int z = (int)((lidar_points[offset+2]+z_offset)*5.0f+0.5f);
-        lidar_xs[i] = x;
-        lidar_ys[i] = y;
-        lidar_zs[i] = z;
+        int x = (int)(lidar_points[0]*10.0f+0.5f) + 576;
+        int y = (int)(-lidar_points[1]*10.0f+0.5f) + 576;
+        int z = (int)((lidar_points[2]+z_offset)*5.0f+0.5f);
         if(x>=0 && x<1152 && y>=0 && y<1152 && z>=0 && z<24){
-            lidar_xs[n_valid_points] = x;
-            lidar_ys[n_valid_points] = y;
-            lidar_zs[n_valid_points] = z;
-            float intensity = lidar_points[offset+3]*scale+0.5f;
-            intensities[n_valid_points] = (intensity>127.0f? 127 :  (int8_t)intensity);
-            if(intensities[n_valid_points]==0) intensities[n_valid_points] = 1;
+            lidar_xs[0] = x;
+            lidar_ys[0] = y;
+            lidar_zs[0] = z;
+            float intensity = lidar_points[3]*scale+0.5f;
+            intensities[0] = (intensity>127.0f? 127 : (int8_t)intensity);
+            if(intensities[0]==0) intensities[0] = 1;
             ++n_valid_points;
+            ++intensities;
+            lidar_xs += 3;
+            lidar_ys += 3;
+            lidar_zs += 3;
         }
-        offset += 5;
+        lidar_points += 5;
     }
     for(int i=0; i<n_valid_points; ++i){
-        offsets[i] = lidar_ys[i]*LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH + lidar_xs[i]*LIDAR_IMAGE_DEPTH + lidar_zs[i];
+        offsets[0] = ys[0]*LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH + xs[0]*LIDAR_IMAGE_DEPTH + zs[0];
+        xs += 3;
+        ys += 3;
+        zs += 3;
+        ++offsets;
     }
     *n_points = n_valid_points;
-    mfree(lidar_xs);
-    mfree(lidar_ys);
-    mfree(lidar_zs);
+    mfree(lidar_coords);
 }
 
 void quaternion_to_matrix(float* qt, float matrix[3][3]){

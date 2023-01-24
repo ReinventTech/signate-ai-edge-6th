@@ -186,12 +186,12 @@ void run_riscv(){
 unsigned long long ZERO = 0;
 
 int8_t* riscv_preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale){
+    std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
     int8_t* lidar_image = (int8_t*)(base_addr + LIDAR_IMAGE_BUFFER);
     unsigned long long* tmp = (unsigned long long*)lidar_image;
     for(int i=0; i<1152*1152*24/8; ++i){
         tmp[i] = ZERO;
     }
-    std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
     volatile float* riscv_lidar_points = (volatile float*)ralloc();
     for(int i=0; i<n_points*5; ++i){
         riscv_lidar_points[i] = lidar_points[i];
