@@ -11,8 +11,8 @@ typedef char bool;
 #define LIDAR_IMAGE_WIDTH 1152
 #define LIDAR_IMAGE_HEIGHT 1152
 #define LIDAR_IMAGE_DEPTH 24
-#define N_BUFFERS 18
-#define BUFFERS_AVAIL_ADDR_OFFSET 251658240 /* 240*1024*1024 */
+#define N_BUFFERS 20
+#define BUFFERS_AVAIL_ADDR_OFFSET 234881024 /* 8*28*1024*1024 */
 
 #define true 1
 #define false 0
@@ -23,28 +23,30 @@ typedef char bool;
 char* base_addr = (char*)0x10000000;
 unsigned int BUFFERS[N_BUFFERS] = {
     0,
-    10*1024*1024,
-    20*1024*1024,
-    30*1024*1024,
-    40*1024*1024,
-    50*1024*1024,
-    60*1024*1024,
-    70*1024*1024,
-    80*1024*1024,
-    90*1024*1024,
-    100*1024*1024,
-    110*1024*1024,
-    120*1024*1024,
-    130*1024*1024,
-    140*1024*1024,
-    150*1024*1024,
-    160*1024*1024,
-    170*1024*1024,
+    8*1*1024*1024,
+    8*2*1024*1024,
+    8*3*1024*1024,
+    8*4*1024*1024,
+    8*5*1024*1024,
+    8*6*1024*1024,
+    8*7*1024*1024,
+    8*8*1024*1024,
+    8*9*1024*1024,
+    8*10*1024*1024,
+    8*11*1024*1024,
+    8*12*1024*1024,
+    8*13*1024*1024,
+    8*14*1024*1024,
+    8*15*1024*1024,
+    8*16*1024*1024,
+    8*17*1024*1024,
+    8*18*1024*1024,
+    8*19*1024*1024,
 };
 bool* BUFFERS_AVAIL = 0;
-unsigned int LIDAR_IMAGE_BUFFER = 180*1024*1024;
-unsigned int RECORD_BUFFER = 220*1024*1024;
-unsigned int RISCV_ARGS_BUFFER = 239*1024*1024;
+unsigned int LIDAR_IMAGE_BUFFER = 8*20*1024*1024;
+unsigned int RECORD_BUFFER = 8*24*1024*1024;
+unsigned int RISCV_ARGS_BUFFER = 8*27*1024*1024;
 
 void* alloc(){
     for(int i=0; i<N_BUFFERS; ++i){
@@ -57,7 +59,7 @@ void* alloc(){
 }
 
 void mfree(void* ptr){
-    int idx = ((unsigned int)ptr-(unsigned int)base_addr) / (10*1024*1024);
+    int idx = ((unsigned int)ptr-(unsigned int)base_addr) / (8*1024*1024);
     BUFFERS_AVAIL[idx] = true;
 }
 

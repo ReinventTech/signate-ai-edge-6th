@@ -1,32 +1,30 @@
-#include <cstdint>
 #include <vart/mm/host_flat_tensor_buffer.hpp>
 #include <vart/runner.hpp>
 #include <xir/graph/graph.hpp>
 #include <xir/tensor/tensor.hpp>
 #include <xir/util/data_type.hpp>
+#include <sys/mman.h>
 #include <vector>
 #include <memory>
 #include <chrono>
+#include <cstdint>
 #include <cmath>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <cassert>
 #include <fcntl.h>
 #include <unistd.h>
-#include <sys/mman.h>
 #include <errno.h>
 #include <poll.h>
 #include "common.h"
-typedef char BOOL;
 typedef signed char int8_t;
 
-//#define true 1
-//#define false 0
 #define LIDAR_IMAGE_WIDTH 1152
 #define LIDAR_IMAGE_HEIGHT 1152
 #define LIDAR_IMAGE_DEPTH 24
-#define N_BUFFERS 18
-#define BUFFERS_AVAIL_ADDR_OFFSET 251658240 /* 240*1024*1024 */
+#define N_BUFFERS 20
+#define BUFFERS_AVAIL_ADDR_OFFSET 234881024 /* 8*28*1024*1024 */
 #define FUNC_PREPROCESS 0
 #define FUNC_REFINE 1
 #define REG(address) *(volatile unsigned int*)(address)
@@ -40,29 +38,31 @@ char* base_addr = 0;
 bool use_riscv = false;
 uintptr_t BUFFERS[N_BUFFERS] = {
     0,
-    10*1024*1024,
-    20*1024*1024,
-    30*1024*1024,
-    40*1024*1024,
-    50*1024*1024,
-    60*1024*1024,
-    70*1024*1024,
-    80*1024*1024,
-    90*1024*1024,
-    100*1024*1024,
-    110*1024*1024,
-    120*1024*1024,
-    130*1024*1024,
-    140*1024*1024,
-    150*1024*1024,
-    160*1024*1024,
-    170*1024*1024,
+    8*1*1024*1024,
+    8*2*1024*1024,
+    8*3*1024*1024,
+    8*4*1024*1024,
+    8*5*1024*1024,
+    8*6*1024*1024,
+    8*7*1024*1024,
+    8*8*1024*1024,
+    8*9*1024*1024,
+    8*10*1024*1024,
+    8*11*1024*1024,
+    8*12*1024*1024,
+    8*13*1024*1024,
+    8*14*1024*1024,
+    8*15*1024*1024,
+    8*16*1024*1024,
+    8*17*1024*1024,
+    8*18*1024*1024,
+    8*19*1024*1024,
 };
+uintptr_t LIDAR_IMAGE_BUFFER = 8*20*1024*1024;
+uintptr_t RECORD_BUFFER = 8*24*1024*1024;
+uintptr_t RISCV_ARGS_BUFFER = 8*27*1024*1024;
 volatile bool* BUFFERS_AVAIL = 0;
 volatile bool* RISCV_BUFFERS_AVAIL = 0;
-uintptr_t LIDAR_IMAGE_BUFFER = 180*1024*1024;
-uintptr_t RECORD_BUFFER = 220*1024*1024;
-uintptr_t RISCV_ARGS_BUFFER = 239*1024*1024;
 volatile unsigned int* iram = 0;
 volatile char* dram = 0;
 volatile unsigned int* gpio = 0;
@@ -151,7 +151,7 @@ void* ralloc(){
 }
 
 void rfree(void* ptr){
-    int idx = ((uintptr_t)ptr-(uintptr_t)dram) / (10*1024*1024);
+    int idx = ((uintptr_t)ptr-(uintptr_t)dram) / (8*1024*1024);
     RISCV_BUFFERS_AVAIL[idx] = true;
 }
 
@@ -162,11 +162,12 @@ void* alloc(){
             return (void*)(base_addr + BUFFERS[i]);
         }
     }
+    printf("alloc failed\n");
     return 0;
 }
 
 void mfree(void* ptr){
-    int idx = ((uintptr_t)ptr-(uintptr_t)base_addr) / (10*1024*1024);
+    int idx = ((uintptr_t)ptr-(uintptr_t)base_addr) / (8*1024*1024);
     BUFFERS_AVAIL[idx] = true;
 }
 
@@ -183,15 +184,12 @@ void run_riscv(){
     REG(gpio) = 0x00; // Reset on
 }
 
-unsigned long long ZERO = 0;
-
 int8_t* riscv_preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale){
     std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
     int8_t* lidar_image = (int8_t*)(base_addr + LIDAR_IMAGE_BUFFER);
     unsigned long long* tmp = (unsigned long long*)lidar_image;
     std::memset(tmp, 0, 1152*1152*24);
     volatile float* riscv_lidar_points = (volatile float*)ralloc();
-    printf("n_points*5 = %d\n", n_points*5);
     unsigned long long* src = (unsigned long long*)lidar_points;
     unsigned long long* dst = (unsigned long long*)riscv_lidar_points;
     std::memcpy(dst, src, n_points*5/2*2*4);
@@ -206,7 +204,7 @@ int8_t* riscv_preprocess(float* lidar_points, int n_points, float z_offset, int 
     *func = FUNC_PREPROCESS;
     unsigned int* arg_lidar_points = (unsigned int*)(riscv_args + 64);
     *arg_lidar_points = (long)riscv_lidar_points - (long)dram;
-    int* arg_n_points = (int*)(riscv_args + 72);
+    volatile int* arg_n_points = (volatile int*)(riscv_args + 72);
     *arg_n_points = n_points;
     float* arg_z_offset = (float*)(riscv_args + 80);
     *arg_z_offset = z_offset;
@@ -288,8 +286,9 @@ int8_t* preprocess(float* lidar_points, int n_points, float z_offset, int input_
     return lidar_image;
 }
 
-float* sigmoid(int* pred, int output_quant_scale){
-    static const float sigmoid_table[256] = {1.2664165549094016e-14, 1.6261110446177924e-14, 2.08796791164589e-14, 2.6810038677817314e-14, 3.442477108469858e-14, 4.420228103640978e-14, 5.6756852326323996e-14, 7.287724095819161e-14, 9.357622968839299e-14, 1.2015425731770343e-13, 1.5428112031916497e-13, 1.9810087980485874e-13, 2.543665647376276e-13, 3.2661313427863805e-13, 4.193795658377786e-13, 5.384940217751136e-13, 6.914400106935423e-13, 8.878265478451776e-13, 1.1399918530430558e-12, 1.4637785141237662e-12, 1.8795288165355508e-12, 2.4133627718273897e-12, 3.0988191387122225e-12, 3.978962535821408e-12, 5.109089028037221e-12, 6.560200168110743e-12, 8.423463754397692e-12, 1.0815941557168708e-11, 1.3887943864771144e-11, 1.7832472907828393e-11, 2.289734845593124e-11, 2.940077739198032e-11, 3.7751345441365816e-11, 4.847368706035286e-11, 6.224144622520383e-11, 7.991959892315218e-11, 1.0261879630648827e-10, 1.3176514268359263e-10, 1.6918979223288784e-10, 2.1724399346070674e-10, 2.7894680920908113e-10, 3.581747929000289e-10, 4.599055376537186e-10, 5.905303995456778e-10, 7.582560422162385e-10, 9.736200303530205e-10, 1.2501528648238605e-09, 1.6052280526088547e-09, 2.0611536181902037e-09, 2.646573631904765e-09, 3.398267807946847e-09, 4.363462233903898e-09, 5.602796406145941e-09, 7.194132978569834e-09, 9.23744957664012e-09, 1.1861120010657661e-08, 1.522997951276035e-08, 1.955568070542584e-08, 2.5109990926928157e-08, 3.2241866333029355e-08, 4.1399375473943306e-08, 5.3157849718487075e-08, 6.825602910446286e-08, 8.764247451323235e-08, 1.12535162055095e-07, 1.4449800373124837e-07, 1.8553910183683314e-07, 2.38236909993343e-07, 3.059022269256247e-07, 3.927862002670442e-07, 5.043474082014517e-07, 6.475947982049267e-07, 8.315280276641321e-07, 1.067702870044147e-06, 1.3709572068578448e-06, 1.7603432133424856e-06, 2.2603242979035746e-06, 2.902311985211097e-06, 3.726639284186561e-06, 4.785094494890119e-06, 6.144174602214718e-06, 7.889262586245034e-06, 1.0129990980873921e-05, 1.3007128466476033e-05, 1.670142184809518e-05, 2.144494842091395e-05, 2.7535691114583473e-05, 3.5356250741744315e-05, 4.5397868702434395e-05, 5.829126566113865e-05, 7.484622751061123e-05, 9.610241549947396e-05, 0.00012339457598623172, 0.00015843621910252592, 0.00020342697805520653, 0.0002611903190957194, 0.0003353501304664781, 0.0004305570813246149, 0.0005527786369235996, 0.0007096703991005881, 0.0009110511944006454, 0.0011695102650555148, 0.0015011822567369917, 0.0019267346633274757, 0.0024726231566347743, 0.0031726828424851893, 0.004070137715896128, 0.005220125693558397, 0.0066928509242848554, 0.008577485413711984, 0.01098694263059318, 0.014063627043245475, 0.01798620996209156, 0.022977369910025615, 0.02931223075135632, 0.03732688734412946, 0.04742587317756678, 0.060086650174007626, 0.07585818002124355, 0.09534946489910949, 0.11920292202211755, 0.14804719803168948, 0.18242552380635635, 0.22270013882530884, 0.2689414213699951, 0.320821300824607, 0.3775406687981454, 0.43782349911420193, 0.5, 0.5621765008857981, 0.6224593312018546, 0.679178699175393, 0.7310585786300049, 0.7772998611746911, 0.8175744761936437, 0.8519528019683106, 0.8807970779778823, 0.9046505351008906, 0.9241418199787566, 0.9399133498259924, 0.9525741268224334, 0.9626731126558706, 0.9706877692486436, 0.9770226300899744, 0.9820137900379085, 0.9859363729567544, 0.9890130573694068, 0.991422514586288, 0.9933071490757153, 0.9947798743064417, 0.995929862284104, 0.9968273171575148, 0.9975273768433653, 0.9980732653366725, 0.998498817743263, 0.9988304897349445, 0.9990889488055994, 0.9992903296008995, 0.9994472213630764, 0.9995694429186754, 0.9996646498695336, 0.9997388096809043, 0.9997965730219448, 0.9998415637808975, 0.9998766054240137, 0.9999038975845005, 0.9999251537724895, 0.9999417087343389, 0.9999546021312976, 0.9999646437492582, 0.9999724643088853, 0.9999785550515792, 0.999983298578152, 0.9999869928715335, 0.9999898700090192, 0.9999921107374138, 0.9999938558253978, 0.9999952149055051, 0.9999962733607158, 0.9999970976880148, 0.999997739675702, 0.9999982396567868, 0.999998629042793, 0.9999989322971299, 0.9999991684719722, 0.9999993524052017, 0.9999994956525918, 0.9999996072137998, 0.999999694097773, 0.9999997617630899, 0.9999998144608981, 0.9999998555019962, 0.9999998874648379, 0.9999999123575255, 0.999999931743971, 0.9999999468421502, 0.9999999586006244, 0.9999999677581336, 0.999999974890009, 0.9999999804443193, 0.9999999847700205, 0.99999998813888, 0.9999999907625504, 0.9999999928058669, 0.9999999943972036, 0.9999999956365377, 0.9999999966017321, 0.9999999973534264, 0.9999999979388463, 0.999999998394772, 0.9999999987498471, 0.9999999990263799, 0.9999999992417439, 0.9999999994094697, 0.9999999995400946, 0.9999999996418252, 0.9999999997210531, 0.999999999782756, 0.9999999998308102, 0.999999999868235, 0.9999999998973812, 0.9999999999200804, 0.9999999999377585, 0.9999999999515263, 0.9999999999622486, 0.9999999999705993, 0.9999999999771028, 0.9999999999821676, 0.999999999986112, 0.999999999989184, 0.9999999999915765, 0.9999999999934397, 0.999999999994891, 0.999999999996021, 0.9999999999969011, 0.9999999999975866, 0.9999999999981204, 0.9999999999985363, 0.99999999999886, 0.9999999999991123, 0.9999999999993086, 0.9999999999994615, 0.9999999999995806, 0.9999999999996734, 0.9999999999997455, 0.9999999999998019, 0.9999999999998457, 0.9999999999998799, 0.9999999999999065, 0.9999999999999272, 0.9999999999999432, 0.9999999999999558, 0.9999999999999656, 0.9999999999999731, 0.9999999999999791, 0.9999999999999838};
+const float sigmoid_table[256] = {1.2664165549094016e-14, 1.6261110446177924e-14, 2.08796791164589e-14, 2.6810038677817314e-14, 3.442477108469858e-14, 4.420228103640978e-14, 5.6756852326323996e-14, 7.287724095819161e-14, 9.357622968839299e-14, 1.2015425731770343e-13, 1.5428112031916497e-13, 1.9810087980485874e-13, 2.543665647376276e-13, 3.2661313427863805e-13, 4.193795658377786e-13, 5.384940217751136e-13, 6.914400106935423e-13, 8.878265478451776e-13, 1.1399918530430558e-12, 1.4637785141237662e-12, 1.8795288165355508e-12, 2.4133627718273897e-12, 3.0988191387122225e-12, 3.978962535821408e-12, 5.109089028037221e-12, 6.560200168110743e-12, 8.423463754397692e-12, 1.0815941557168708e-11, 1.3887943864771144e-11, 1.7832472907828393e-11, 2.289734845593124e-11, 2.940077739198032e-11, 3.7751345441365816e-11, 4.847368706035286e-11, 6.224144622520383e-11, 7.991959892315218e-11, 1.0261879630648827e-10, 1.3176514268359263e-10, 1.6918979223288784e-10, 2.1724399346070674e-10, 2.7894680920908113e-10, 3.581747929000289e-10, 4.599055376537186e-10, 5.905303995456778e-10, 7.582560422162385e-10, 9.736200303530205e-10, 1.2501528648238605e-09, 1.6052280526088547e-09, 2.0611536181902037e-09, 2.646573631904765e-09, 3.398267807946847e-09, 4.363462233903898e-09, 5.602796406145941e-09, 7.194132978569834e-09, 9.23744957664012e-09, 1.1861120010657661e-08, 1.522997951276035e-08, 1.955568070542584e-08, 2.5109990926928157e-08, 3.2241866333029355e-08, 4.1399375473943306e-08, 5.3157849718487075e-08, 6.825602910446286e-08, 8.764247451323235e-08, 1.12535162055095e-07, 1.4449800373124837e-07, 1.8553910183683314e-07, 2.38236909993343e-07, 3.059022269256247e-07, 3.927862002670442e-07, 5.043474082014517e-07, 6.475947982049267e-07, 8.315280276641321e-07, 1.067702870044147e-06, 1.3709572068578448e-06, 1.7603432133424856e-06, 2.2603242979035746e-06, 2.902311985211097e-06, 3.726639284186561e-06, 4.785094494890119e-06, 6.144174602214718e-06, 7.889262586245034e-06, 1.0129990980873921e-05, 1.3007128466476033e-05, 1.670142184809518e-05, 2.144494842091395e-05, 2.7535691114583473e-05, 3.5356250741744315e-05, 4.5397868702434395e-05, 5.829126566113865e-05, 7.484622751061123e-05, 9.610241549947396e-05, 0.00012339457598623172, 0.00015843621910252592, 0.00020342697805520653, 0.0002611903190957194, 0.0003353501304664781, 0.0004305570813246149, 0.0005527786369235996, 0.0007096703991005881, 0.0009110511944006454, 0.0011695102650555148, 0.0015011822567369917, 0.0019267346633274757, 0.0024726231566347743, 0.0031726828424851893, 0.004070137715896128, 0.005220125693558397, 0.0066928509242848554, 0.008577485413711984, 0.01098694263059318, 0.014063627043245475, 0.01798620996209156, 0.022977369910025615, 0.02931223075135632, 0.03732688734412946, 0.04742587317756678, 0.060086650174007626, 0.07585818002124355, 0.09534946489910949, 0.11920292202211755, 0.14804719803168948, 0.18242552380635635, 0.22270013882530884, 0.2689414213699951, 0.320821300824607, 0.3775406687981454, 0.43782349911420193, 0.5, 0.5621765008857981, 0.6224593312018546, 0.679178699175393, 0.7310585786300049, 0.7772998611746911, 0.8175744761936437, 0.8519528019683106, 0.8807970779778823, 0.9046505351008906, 0.9241418199787566, 0.9399133498259924, 0.9525741268224334, 0.9626731126558706, 0.9706877692486436, 0.9770226300899744, 0.9820137900379085, 0.9859363729567544, 0.9890130573694068, 0.991422514586288, 0.9933071490757153, 0.9947798743064417, 0.995929862284104, 0.9968273171575148, 0.9975273768433653, 0.9980732653366725, 0.998498817743263, 0.9988304897349445, 0.9990889488055994, 0.9992903296008995, 0.9994472213630764, 0.9995694429186754, 0.9996646498695336, 0.9997388096809043, 0.9997965730219448, 0.9998415637808975, 0.9998766054240137, 0.9999038975845005, 0.9999251537724895, 0.9999417087343389, 0.9999546021312976, 0.9999646437492582, 0.9999724643088853, 0.9999785550515792, 0.999983298578152, 0.9999869928715335, 0.9999898700090192, 0.9999921107374138, 0.9999938558253978, 0.9999952149055051, 0.9999962733607158, 0.9999970976880148, 0.999997739675702, 0.9999982396567868, 0.999998629042793, 0.9999989322971299, 0.9999991684719722, 0.9999993524052017, 0.9999994956525918, 0.9999996072137998, 0.999999694097773, 0.9999997617630899, 0.9999998144608981, 0.9999998555019962, 0.9999998874648379, 0.9999999123575255, 0.999999931743971, 0.9999999468421502, 0.9999999586006244, 0.9999999677581336, 0.999999974890009, 0.9999999804443193, 0.9999999847700205, 0.99999998813888, 0.9999999907625504, 0.9999999928058669, 0.9999999943972036, 0.9999999956365377, 0.9999999966017321, 0.9999999973534264, 0.9999999979388463, 0.999999998394772, 0.9999999987498471, 0.9999999990263799, 0.9999999992417439, 0.9999999994094697, 0.9999999995400946, 0.9999999996418252, 0.9999999997210531, 0.999999999782756, 0.9999999998308102, 0.999999999868235, 0.9999999998973812, 0.9999999999200804, 0.9999999999377585, 0.9999999999515263, 0.9999999999622486, 0.9999999999705993, 0.9999999999771028, 0.9999999999821676, 0.999999999986112, 0.999999999989184, 0.9999999999915765, 0.9999999999934397, 0.999999999994891, 0.999999999996021, 0.9999999999969011, 0.9999999999975866, 0.9999999999981204, 0.9999999999985363, 0.99999999999886, 0.9999999999991123, 0.9999999999993086, 0.9999999999994615, 0.9999999999995806, 0.9999999999996734, 0.9999999999997455, 0.9999999999998019, 0.9999999999998457, 0.9999999999998799, 0.9999999999999065, 0.9999999999999272, 0.9999999999999432, 0.9999999999999558, 0.9999999999999656, 0.9999999999999731, 0.9999999999999791, 0.9999999999999838};
+
+float* sigmoid(unsigned char* pred, int output_quant_scale){
     float* sigmoid_pred = (float*)alloc();
     //int scale = 7 - output_quant_scale;
     for(int i=0; i<1024*1024; ++i){
@@ -327,75 +326,81 @@ void rotate(float inp[3], float outp[3], float mx[3][3]){
     //outp[2] = mx[2][0]*inp[0] + mx[2][1]*inp[1] + mx[2][2]*inp[2];
 }
 
-BOOL* get_pedestrian_mask(float* pedestrian_fy){
-    BOOL* buffer = (BOOL*)alloc();
-    BOOL* pedestrian_m = (BOOL*)alloc();
+void rotate_2d(float* inp, float* outp, float mx[2][2]){
+    outp[0] = mx[0][0]*inp[0] + mx[0][1]*inp[1];
+    outp[1] = mx[1][0]*inp[0] + mx[1][1]*inp[1];
+}
+
+bool* get_pedestrian_mask(unsigned char* pedestrian_fy){
+    bool* buffer0 = (bool*)alloc();
+    bool* buffer1 = buffer0 + LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT;
+    bool* pedestrian_m = (bool*)alloc();
     for(int i=0; i<LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT; ++i){
-        buffer[i] = pedestrian_m[i] = (pedestrian_fy[i]>0.28);
+        buffer0[i] = pedestrian_m[i] = (pedestrian_fy[i]>124);
+        buffer1[i] = (pedestrian_fy[i]>110);
     }
     for(int y=0; y<1023; ++y){
         int offset0 = y * 1024;
         int offset1 = offset0 + 1024;
         for(int x=0; x<1024; ++x){
-            pedestrian_m[offset0+x] |= buffer[offset1+x];
-            pedestrian_m[offset1+x] |= buffer[offset0+x];
+            pedestrian_m[offset0+x] |= buffer0[offset1+x];
+            pedestrian_m[offset1+x] |= buffer0[offset0+x];
         }
     }
     for(int y=0; y<1024; ++y){
         int offset0 = y * 1024;
         int offset1 = offset0 + 1;
         for(int x=0; x<1023; ++x){
-            pedestrian_m[offset0+x] |= buffer[offset1+x];
-            pedestrian_m[offset1+x] |= buffer[offset0+x];
+            pedestrian_m[offset0+x] |= buffer0[offset1+x];
+            pedestrian_m[offset1+x] |= buffer0[offset0+x];
         }
     }
     for(int y=0; y<1024; ++y){
         int offset = y * 1024;
         for(int x=0; x<1024; ++x){
-            pedestrian_m[offset+x] = buffer[offset+x] || ((!pedestrian_m[offset+x]) && pedestrian_fy[offset+x]>0.012);
+            pedestrian_m[offset+x] = buffer0[offset+x] || ((!pedestrian_m[offset+x]) && buffer1[offset+x]);
         }
     }
-    mfree((void*)buffer);
+    mfree((void*)buffer0);
     return pedestrian_m;
 }
 
-BOOL* get_vehicle_mask(float* vehicle_fy){
-    BOOL* buffer = (BOOL*)alloc();
-    BOOL* vehicle_m = (BOOL*)alloc();
+bool* get_vehicle_mask(unsigned char* vehicle_fy){
+    bool* buffer0 = (bool*)alloc();
+    bool* buffer1 = buffer0 + LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT;
+    bool* vehicle_m = (bool*)alloc();
     for(int i=0; i<LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT; ++i){
-        buffer[i] = vehicle_m[i] = (vehicle_fy[i]>0.19);
+        buffer0[i] = vehicle_m[i] = (vehicle_fy[i]>122);
+        buffer1[i] = (vehicle_fy[i]>119);
     }
     for(int y=0; y<1021; ++y){
         int offset0 = y * 1024;
         int offset1 = offset0 + 3072;
         for(int x=0; x<1024; ++x){
-            vehicle_m[offset0+x] |= buffer[offset1+x];
-            vehicle_m[offset1+x] |= buffer[offset0+x];
+            vehicle_m[offset0+x] |= buffer0[offset1+x];
+            vehicle_m[offset1+x] |= buffer0[offset0+x];
         }
     }
     for(int y=0; y<1024; ++y){
         int offset0 = y * 1024;
         int offset1 = offset0 + 3;
         for(int x=0; x<1021; ++x){
-            vehicle_m[offset0+x] |= buffer[offset1+x];
-            vehicle_m[offset1+x] |= buffer[offset0+x];
+            vehicle_m[offset0+x] |= buffer0[offset1+x];
+            vehicle_m[offset1+x] |= buffer0[offset0+x];
         }
     }
     for(int y=0; y<1024; ++y){
         int offset = y * 1024;
         for(int x=0; x<1024; ++x){
-            vehicle_m[offset+x] = buffer[offset+x] || ((!vehicle_m[offset+x]) && vehicle_fy[offset+x]>0.1);
+            vehicle_m[offset+x] = buffer0[offset+x] || ((!vehicle_m[offset+x]) && buffer1[offset+x]);
         }
     }
-    mfree((void*)buffer);
+    mfree((void*)buffer0);
     return vehicle_m;
 }
 
-bool FALSE = false;
-
-void cca(float* p, BOOL* m, int* n_centroids, float* scores, int* areas, float* centroids){
-    std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
-    BOOL* checked = (BOOL*)alloc();
+void cca(unsigned char* p, bool* m, int* n_centroids, float* scores, int* areas, float* centroids){
+    bool* checked = (bool*)alloc();
     unsigned long long* dst = (unsigned long long*)checked;
     std::memset(dst, 0, 1024*1024);
     *n_centroids = 0;
@@ -409,60 +414,71 @@ void cca(float* p, BOOL* m, int* n_centroids, float* scores, int* areas, float* 
                 checked[offset] = true;
                 continue;
             }
-            float score = p[offset];
+            unsigned char score = p[offset];
             int area = 1;
-            long long ys = y;
-            long long xs = x;
+            int ys = y;
+            int xs = x;
             coords[0] = x;
             coords[1] = y;
             checked[offset] = true;
             int idx = 0;
+            int* head_coords = coords;
+            int* tail_coords = coords + 2;
             while(idx<area){
-                int tx = coords[idx*2+0];
-                int ty = coords[idx*2+1];
-                if(tx>0 && !checked[ty*1024+tx-1] && m[ty*1024+tx-1]==1){
-                    coords[area*2+0] = tx - 1;
-                    coords[area*2+1] = ty;
+                int tx = head_coords[0];
+                int ty = head_coords[1];
+                int d = ty*1024 + tx - 1;
+                if(m[d]==1 && !checked[d] && tx>0){
+                    tail_coords[0] = tx - 1;
+                    tail_coords[1] = ty;
                     ++area;
-                    checked[ty*1024+tx-1] = true;
+                    checked[d] = true;
                     ys += ty;
                     xs += tx - 1;
-                    score = (score<p[ty*1024+tx-1]? p[ty*1024+tx-1] : score);
+                    score = (score<p[d]? p[d] : score);
+                    tail_coords += 2;
                 }
-                if(tx<1024-1 && !checked[ty*1024+tx+1] && m[ty*1024+tx+1]==1){
-                    coords[area*2+0] = tx + 1;
-                    coords[area*2+1] = ty;
+                d += 2;
+                if(m[d]==1 && !checked[d] && tx<1023){
+                    tail_coords[0] = tx + 1;
+                    tail_coords[1] = ty;
                     ++area;
-                    checked[ty*1024+tx+1] = true;
+                    checked[d] = true;
                     ys += ty;
                     xs += tx + 1;
-                    score = (score<p[ty*1024+tx+1]? p[ty*1024+tx+1] : score);
+                    score = (score<p[d]? p[d] : score);
+                    tail_coords += 2;
                 }
-                if(ty>0 && !checked[(ty-1)*1024+tx] && m[(ty-1)*1024+tx]==1){
-                    coords[area*2+0] = tx;
-                    coords[area*2+1] = ty - 1;
+                d -= 1025;
+                if(m[d]==1 && !checked[d] && ty>0){
+                    tail_coords[0] = tx;
+                    tail_coords[1] = ty - 1;
                     ++area;
-                    checked[(ty-1)*1024+tx] = true;
+                    checked[d] = true;
                     ys += ty - 1;
                     xs += tx;
-                    score = (score<p[(ty-1)*1024+tx]? p[(ty-1)*1024+tx] : score);
+                    score = (score<p[d]? p[d] : score);
+                    tail_coords += 2;
                 }
-                if(ty<1024-1 && !checked[(ty+1)*1024+tx] && m[(ty+1)*1024+tx]==1){
-                    coords[area*2+0] = tx;
-                    coords[area*2+1] = ty + 1;
+                d += 2048;
+                if(m[d]==1 && !checked[d] && ty<1023){
+                    tail_coords[0] = tx;
+                    tail_coords[1] = ty + 1;
                     ++area;
-                    checked[(ty+1)*1024+tx] = true;
+                    checked[d] = true;
                     ys += ty + 1;
                     xs += tx;
-                    score = (score<p[(ty+1)*1024+tx]? p[(ty+1)*1024+tx] : score);
+                    score = (score<p[d]? p[d] : score);
+                    tail_coords += 2;
                 }
+                head_coords += 2;
                 ++idx;
             }
             float cx = (float)xs / (float)area;
             float cy = (float)ys / (float)area;
             centroids[*n_centroids*2] = cx;
             centroids[*n_centroids*2+1] = cy;
-            scores[*n_centroids] = score;
+            scores[*n_centroids] = sigmoid_table[score];
             areas[*n_centroids] = area;
             ++*n_centroids;
         }
@@ -471,12 +487,17 @@ void cca(float* p, BOOL* m, int* n_centroids, float* scores, int* areas, float* 
     mfree((void*)coords);
 }
 
-void postprocess(float* pedestrian_pred, float* vehicle_pred, float* pedestrian_centroid, float* pedestrian_confidence, int* n_pedestrians, float* vehicle_centroid, float* vehicle_confidence, int* n_vehicles, int frame_idx, float* records){
-    BOOL* pedestrian_m = get_pedestrian_mask(pedestrian_pred);
-    BOOL* vehicle_m = get_vehicle_mask(vehicle_pred);
+void postprocess(unsigned char* quant_pedestrian_pred, unsigned char* quant_vehicle_pred, float* pedestrian_centroid, float* pedestrian_confidence, int* n_pedestrians, float* vehicle_centroid, float* vehicle_confidence, int* n_vehicles, int frame_idx, unsigned char* pred_records, float* ego_records){
+    std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
+    bool* pedestrian_m = get_pedestrian_mask(quant_pedestrian_pred);
+    bool* vehicle_m = get_vehicle_mask(quant_vehicle_pred);
+    std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
+    double d0 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0);
+    printf("mask time[ms]: %lf\n", d0);
 
     int* pedestrian_areas = (int*)alloc();
-    cca(pedestrian_pred, pedestrian_m, n_pedestrians, pedestrian_confidence, pedestrian_areas, pedestrian_centroid);
+    cca(quant_pedestrian_pred, pedestrian_m, n_pedestrians, pedestrian_confidence, pedestrian_areas, pedestrian_centroid);
+
     int n_filtered_pedestrians = 0;
     for(int i=0; i<*n_pedestrians; ++i){
         if(pedestrian_areas[i]>78 && pedestrian_confidence[i]>0.28){
@@ -490,7 +511,7 @@ void postprocess(float* pedestrian_pred, float* vehicle_pred, float* pedestrian_
     *n_pedestrians += n_filtered_pedestrians;
 
     int* vehicle_areas = (int*)alloc();
-    cca(vehicle_pred, vehicle_m, n_vehicles, vehicle_confidence, vehicle_areas, vehicle_centroid);
+    cca(quant_vehicle_pred, vehicle_m, n_vehicles, vehicle_confidence, vehicle_areas, vehicle_centroid);
 
     mfree((void*)pedestrian_m);
     mfree((void*)vehicle_m);
@@ -639,7 +660,7 @@ void refine_predictions(float* preds, int8_t* input_image, float* centroids, flo
     for(int i=0; i<*n_preds; ++i){
         int x = (int)(centroids[i*2]+0.5) + 64;
         int y = (int)(centroids[i*2+1]+0.5) + 64;
-        BOOL has_points = false;
+        bool has_points = false;
         int sx = x>7? (x-7) : 0;
         int sy = y>7? (y-7) : 0;
         int ex = x<LIDAR_IMAGE_WIDTH-7? (x+7) : (LIDAR_IMAGE_WIDTH-1);
@@ -745,17 +766,17 @@ void inverse_quaternion(float in_qt[4], float out_qt[4]){
     out_qt[3] = -in_qt[3] / d;
 }
 
-void merge_prev_preds(float* pred, float ego_translation[3], float ego_rotation[4], int frame_idx, float* records, int category){
-    int offset0 = (frame_idx%2+1) * (1024*1024*2 + 8);
-    int offset1 = ((frame_idx)%2) * (1024*1024*2 + 8);
+void merge_prev_preds(unsigned char* pred, float ego_translation[3], float ego_rotation[4], int frame_idx, unsigned char* pred_records, float* ego_records, int category){
+    int offset0 = (frame_idx%2+1) * 1024*1024*2;
+    int offset1 = ((frame_idx)%2) * 1024*1024*2;
 
-    float* pred0 = records + offset0 + category*1024*1024;
-    float* txyz0 = records + offset0 + 1024*1024*2;
-    float* qt0 = records + offset0 + 1024*1024*2 + 3;
+    unsigned char* pred0 = pred_records + offset0 + category*1024*1024;
+    float* txyz0 = ego_records + (frame_idx%2+1) * 8;
+    float* qt0 = ego_records + (frame_idx%2+1) * 8 + 3;
 
-    float* pred1 = records + offset1 + category*1024*1024;
-    float* txyz1 = records + offset1 + 1024*1024*2;
-    float* qt1 = records + offset1 + 1024*1024*2 + 3;
+    unsigned char* pred1 = pred_records + offset1 + category*1024*1024;
+    float* txyz1 = ego_records + (frame_idx%2) * 8;
+    float* qt1 = ego_records + (frame_idx%2) * 8 + 3;
 
     float dtx0 = ego_translation[0] - txyz0[0];
     float dty0 = ego_translation[1] - txyz0[1];
@@ -773,29 +794,32 @@ void merge_prev_preds(float* pred, float ego_translation[3], float ego_rotation[
     float dr1[4] = {};
     composite_quaternions((float*)qt1, iqt, dr1);
 
-    float mx0[3][3] = {};
-    float mx1[3][3] = {};
-    quaternion_to_matrix(dr0, mx0);
-    quaternion_to_matrix(dr1, mx1);
+    float _mx0[3][3] = {};
+    float _mx1[3][3] = {};
+    quaternion_to_matrix(dr0, _mx0);
+    quaternion_to_matrix(dr1, _mx1);
+    float mx0[2][2] = {{_mx0[0][0], _mx0[0][1]}, {_mx0[1][0], _mx0[1][1]}};
+    float mx1[2][2] = {{_mx1[0][0], _mx1[0][1]}, {_mx1[1][0], _mx1[1][1]}};
 
     for(int y=0; y<1024; ++y){
+        float dxyz[3] = {0.0f, (float)(y - 512), 0.0f};
         for(int x=0; x<1024; ++x){
-            float dxyz[3] = {(float)(x - 512), (float)(y - 512), 0.0f};
-            float sxyz0[3] = {};
-            rotate(dxyz, sxyz0, mx0);
+            dxyz[0] = (float)(x - 512);
+            float sxyz0[2];
+            rotate_2d(dxyz, sxyz0, mx0);
             int sx0 = (int)(sxyz0[0] + dtx0*10.0f + 0.5f) + 512;
             int sy0 = (int)(sxyz0[1] - dty0*10.0f + 0.5f) + 512;
-            float v1 = (sx0>=0 && sx0<1024 && sy0>=0 && sy0<1024)? pred0[sy0*1024 + sx0] : 0.0f;
+            unsigned char v1 = (sx0>=0 && sx0<1024 && sy0>=0 && sy0<1024)? pred0[sy0*1024 + sx0] : 0;
 
-            float sxyz1[3] = {};
-            rotate(dxyz, sxyz1, mx1);
+            float sxyz1[2];
+            rotate_2d(dxyz, sxyz1, mx1);
             int sx1 = (int)(sxyz1[0] + dtx1*10.0f + 0.5f) + 512;
             int sy1 = (int)(sxyz1[1] - dty1*10.0f + 0.5f) + 512;
-            float v2 = (sx1>=0 && sx1<1024 && sy1>=0 && sy1<1024)? pred1[sy1*1024 + sx1] : 0.0f;
+            unsigned char v2 = (sx1>=0 && sx1<1024 && sy1>=0 && sy1<1024)? pred1[sy1*1024 + sx1] : 0;
 
-            float v0 = pred[y*1024 + x];
-            float a = v0>v2? v0 : v2;
-            float b = a>v1? v1 : a;
+            unsigned char v0 = pred[y*1024 + x];
+            unsigned char a = v0>v2? v0 : v2;
+            unsigned char b = a>v1? v1 : a;
             pred[y*1024 + x] = (b<v0? v0 : b);
         }
     }
@@ -830,27 +854,27 @@ void run_dpu(vart::Runner* runner, int8_t* input_image, int8_t* pred){
 }
 
 
-void update_records(int frame_idx, float* pedestrian_pred, float* vehicle_pred, float ego_translation[3], float ego_rotation[4], float* records){
-    int record_offset = (frame_idx%2) * (1024*1024*2+8);
+void update_records(int frame_idx, unsigned char* pedestrian_pred, unsigned char* vehicle_pred, float ego_translation[3], float ego_rotation[4], unsigned char* pred_records, float* ego_records){
+    int pred_record_offset = (frame_idx%2) * 1024*1024*2;
     unsigned long long* src = (unsigned long long*)pedestrian_pred;
-    unsigned long long* dst = (unsigned long long*)(records+record_offset);
-    std::memcpy(dst, src, 1024*1024*4);
-    record_offset += 1024 * 1024;
+    unsigned long long* dst = (unsigned long long*)(pred_records+pred_record_offset);
+    std::memcpy(dst, src, 1024*1024);
+    pred_record_offset += 1024 * 1024;
     src = (unsigned long long*)vehicle_pred;
-    dst = (unsigned long long*)(records+record_offset);
-    std::memcpy(dst, src, 1024*1024*4);
-    record_offset += 1024 * 1024;
-    records[record_offset] = ego_translation[0];
-    records[record_offset+1] = ego_translation[1];
-    records[record_offset+2] = ego_translation[2];
-    records[record_offset+3] = ego_rotation[0];
-    records[record_offset+4] = ego_rotation[1];
-    records[record_offset+5] = ego_rotation[2];
-    records[record_offset+6] = ego_rotation[3];
+    dst = (unsigned long long*)(pred_records+pred_record_offset);
+    std::memcpy(dst, src, 1024*1024);
+    int ego_record_offset = (frame_idx%2) * 8;
+    ego_records[ego_record_offset] = ego_translation[0];
+    ego_records[ego_record_offset+1] = ego_translation[1];
+    ego_records[ego_record_offset+2] = ego_translation[2];
+    ego_records[ego_record_offset+3] = ego_rotation[0];
+    ego_records[ego_record_offset+4] = ego_rotation[1];
+    ego_records[ego_record_offset+5] = ego_rotation[2];
+    ego_records[ego_record_offset+6] = ego_rotation[3];
 }
 
 
-void predict(float* lidar_points, int n_points, int input_quant_scale, int output_quant_scale, float ego_translation[3], float ego_rotation[4], float* pedestrian_preds, float* vehicle_preds, int* n_pedestrians, int* n_vehicles, vart::Runner* runner, int frame_idx, float* records){
+void predict(float* lidar_points, int n_points, int input_quant_scale, int output_quant_scale, float ego_translation[3], float ego_rotation[4], float* pedestrian_preds, float* vehicle_preds, int* n_pedestrians, int* n_vehicles, vart::Runner* runner, int frame_idx, unsigned char* pred_records, float* ego_records){
     std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
     int8_t* input_image = preprocess(lidar_points, n_points, 3.7, input_quant_scale);
     std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
@@ -859,8 +883,8 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
     run_dpu(runner, (int8_t*)input_image, (int8_t*)quant_pred);
     std::chrono::system_clock::time_point t2 = std::chrono::system_clock::now();
 
-    int* quant_pedestrian_pred = (int*)alloc();
-    int* quant_vehicle_pred = (int*)alloc();
+    unsigned char* quant_pedestrian_pred = (unsigned char*)alloc();
+    unsigned char* quant_vehicle_pred = (unsigned char*)alloc();
     for(int y=0; y<1024; ++y){
         for(int x=0; x<1024; ++x){
             int src = (y+64)*1152*2 + (x+64)*2;
@@ -871,31 +895,26 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
     }
     mfree(quant_pred);
 
-    float* pedestrian_pred = sigmoid(quant_pedestrian_pred, output_quant_scale);
-    mfree(quant_pedestrian_pred);
-
-    float* vehicle_pred = sigmoid(quant_vehicle_pred, output_quant_scale);
-    mfree(quant_vehicle_pred);
     std::chrono::system_clock::time_point t3 = std::chrono::system_clock::now();
+
+    if(frame_idx>=2){
+        merge_prev_preds(quant_pedestrian_pred, ego_translation, ego_rotation, frame_idx, pred_records, ego_records, 0);
+        merge_prev_preds(quant_vehicle_pred, ego_translation, ego_rotation, frame_idx, pred_records, ego_records, 1);
+    }
+    std::chrono::system_clock::time_point t4 = std::chrono::system_clock::now();
 
     float* pedestrian_centroids = (float*)alloc();
     float* pedestrian_confidence = (float*)alloc();
     float* vehicle_centroids = (float*)alloc();
     float* vehicle_confidence = (float*)alloc();
 
-    if(frame_idx>=2){
-        merge_prev_preds(pedestrian_pred, ego_translation, ego_rotation, frame_idx, records, 0);
-        merge_prev_preds(vehicle_pred, ego_translation, ego_rotation, frame_idx, records, 1);
-    }
-    std::chrono::system_clock::time_point t4 = std::chrono::system_clock::now();
-
-    postprocess(pedestrian_pred, vehicle_pred, pedestrian_centroids, pedestrian_confidence, n_pedestrians, vehicle_centroids, vehicle_confidence, n_vehicles, frame_idx, records);
+    postprocess(quant_pedestrian_pred, quant_vehicle_pred, pedestrian_centroids, pedestrian_confidence, n_pedestrians, vehicle_centroids, vehicle_confidence, n_vehicles, frame_idx, pred_records, ego_records);
     std::chrono::system_clock::time_point t5 = std::chrono::system_clock::now();
 
-    update_records(frame_idx, pedestrian_pred, vehicle_pred, ego_translation, ego_rotation, records);
+    update_records(frame_idx, quant_pedestrian_pred, quant_vehicle_pred, ego_translation, ego_rotation, pred_records, ego_records);
+    mfree(quant_pedestrian_pred);
+    mfree(quant_vehicle_pred);
 
-    mfree(pedestrian_pred);
-    mfree(vehicle_pred);
     std::chrono::system_clock::time_point t6 = std::chrono::system_clock::now();
 
     refine_predictions(pedestrian_preds, input_image, pedestrian_centroids, pedestrian_confidence, n_pedestrians, ego_translation, ego_rotation, 40, 39, 0.95, 0.8, 55, true);
@@ -920,9 +939,9 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
 void predict_scene(char* output_path, char* xmodel_path){
     printf("start scene\n");
     int frame_idx = 0;
-    float* records = (float*)(base_addr + RECORD_BUFFER);
-    float* ego_pose_records = (float*)alloc();
-    float* pred_records = (float*)alloc();
+    char* records = (char*)(base_addr + RECORD_BUFFER);
+    unsigned char* pred_records = (unsigned char*)records;
+    float* ego_records = (float*)(records + 1024*1024*2*2);
 
     char frame_id[16];
     char lidar_path[256];
@@ -948,7 +967,7 @@ void predict_scene(char* output_path, char* xmodel_path){
         fclose(ifp);
         int n_pedestrians = 0;
         int n_vehicles = 0;
-        predict(lidar_points, n_points, input_quant_scale, output_quant_scale, ego_translation, ego_rotation, pedestrian_preds, vehicle_preds, &n_pedestrians, &n_vehicles, runner.get(), frame_idx, records);
+        predict(lidar_points, n_points, input_quant_scale, output_quant_scale, ego_translation, ego_rotation, pedestrian_preds, vehicle_preds, &n_pedestrians, &n_vehicles, runner.get(), frame_idx, pred_records, ego_records);
         FILE* ofp = fopen(output_path, "a");
         if(!first_frame) fprintf(ofp, ", ");
         fprintf(ofp, "\"%s\": {", frame_id);
@@ -975,13 +994,11 @@ void predict_scene(char* output_path, char* xmodel_path){
         fclose(ofp);
         first_frame = false;
         ++frame_idx;
-        if(frame_idx>=3){
-            break;
-        }
+        //if(frame_idx>=3){
+            //break;
+        //}
         //if(frame_idx>1) break;
     }
-    mfree(ego_pose_records);
-    mfree(pred_records);
     mfree(lidar_points);
     mfree(pedestrian_preds);
     mfree(vehicle_preds);
