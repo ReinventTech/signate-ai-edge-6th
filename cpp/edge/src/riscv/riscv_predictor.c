@@ -64,15 +64,14 @@ void mfree(void* ptr){
 /* Use this to initialize lidar_image, avoiding memset */
 unsigned int ZERO = 0;
 
-int8_t* preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale){
+void preprocess(volatile float* lidar_points, volatile int* n_points, float z_offset, int input_quant_scale, volatile int* offsets, volatile int8_t* intensities){
     int* lidar_xs = (int*)alloc();
     int* lidar_ys = (int*)alloc();
     int* lidar_zs = (int*)alloc();
-    int8_t* intensities = (int8_t*)alloc();
     int offset = 0;
     int n_valid_points = 0;
     float scale = (float)(1 << input_quant_scale);
-    for(int i=0; i<n_points; ++i){
+    for(int i=0; i<*n_points; ++i){
         int x = (int)(lidar_points[offset]*10.0f+0.5f) + 576;
         int y = (int)(-lidar_points[offset+1]*10.0f+0.5f) + 576;
         int z = (int)((lidar_points[offset+2]+z_offset)*5.0f+0.5f);
@@ -90,20 +89,13 @@ int8_t* preprocess(float* lidar_points, int n_points, float z_offset, int input_
         }
         offset += 5;
     }
-    int8_t* lidar_image = (int8_t*)(base_addr + LIDAR_IMAGE_BUFFER);
-    unsigned int* tmp = (unsigned int*)lidar_image;
-    /*for(int i=0; i<LIDAR_IMAGE_HEIGHT*LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH/4; ++i){*/
-        /*tmp[i] = ZERO;*/
-    /*}*/
     for(int i=0; i<n_valid_points; ++i){
-        int offset = lidar_ys[i]*LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH + lidar_xs[i]*LIDAR_IMAGE_DEPTH + lidar_zs[i];
-        lidar_image[offset] = (lidar_image[offset]<intensities[i]? intensities[i] : lidar_image[offset]);
+        offsets[i] = lidar_ys[i]*LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH + lidar_xs[i]*LIDAR_IMAGE_DEPTH + lidar_zs[i];
     }
+    *n_points = n_valid_points;
     mfree(lidar_xs);
     mfree(lidar_ys);
     mfree(lidar_zs);
-    mfree(intensities);
-    return lidar_image;
 }
 
 void quaternion_to_matrix(float* qt, float matrix[3][3]){
@@ -294,14 +286,16 @@ int main(void)
     volatile unsigned int* func = (volatile unsigned int*)args;
 
     if(*func==FUNC_PREPROCESS){
-        unsigned int* lidar_points_addr = (unsigned int*)(args + 64);
-        float* lidar_points = (float*)(*lidar_points_addr + DMEM_BASE);
-        int* n_points = (int*)(args + 72);
-        float* z_offset = (float*)(args + 80);
-        int* input_quant_scale = (int*)(args + 88);
-        int8_t* lidar_image = preprocess(lidar_points, *n_points, *z_offset, *input_quant_scale);
-        long* lidar_image_addr = (long*)(args + 96);
-        *lidar_image_addr = (unsigned int)lidar_image - (unsigned int)base_addr;
+        volatile unsigned int* lidar_points_addr = (volatile unsigned int*)(args + 64);
+        volatile float* lidar_points = (volatile float*)(*lidar_points_addr + DMEM_BASE);
+        volatile int* n_points = (volatile int*)(args + 72);
+        volatile float* z_offset = (volatile float*)(args + 80);
+        volatile int* input_quant_scale = (volatile int*)(args + 88);
+        volatile unsigned int* offsets_addr = (volatile unsigned int*)(args + 96);
+        volatile int* offsets = (volatile int*)(*offsets_addr + DMEM_BASE);
+        volatile unsigned int* intensities_addr = (volatile unsigned int*)(args + 104);
+        volatile int8_t* intensities = (volatile int8_t*)(*intensities_addr + DMEM_BASE);
+        preprocess(lidar_points, n_points, *z_offset, *input_quant_scale, offsets, intensities);
     }
     else if(*func==FUNC_REFINE){
         int8_t* input_image = (int8_t*)(LIDAR_IMAGE_BUFFER + DMEM_BASE);

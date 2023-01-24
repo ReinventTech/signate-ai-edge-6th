@@ -186,21 +186,20 @@ void run_riscv(){
 unsigned long long ZERO = 0;
 
 int8_t* riscv_preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale){
-    int8_t* riscv_lidar_image = (int8_t*)(dram + LIDAR_IMAGE_BUFFER);
-    unsigned long long* tmp = (unsigned long long*)riscv_lidar_image;
+    int8_t* lidar_image = (int8_t*)(base_addr + LIDAR_IMAGE_BUFFER);
+    unsigned long long* tmp = (unsigned long long*)lidar_image;
     for(int i=0; i<1152*1152*24/8; ++i){
         tmp[i] = ZERO;
     }
     std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
-    float* riscv_lidar_points = (float*)ralloc();
+    volatile float* riscv_lidar_points = (volatile float*)ralloc();
     for(int i=0; i<n_points*5; ++i){
         riscv_lidar_points[i] = lidar_points[i];
     }
     std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
     double d0 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0);
     printf("copy1 time[ms]: %lf\n", d0);
-    char* riscv_args = 
-        (char*)(dram + RISCV_ARGS_BUFFER);
+    char* riscv_args = (char*)(dram + RISCV_ARGS_BUFFER);
     unsigned int* func = (unsigned int*)riscv_args;
     *func = FUNC_PREPROCESS;
     unsigned int* arg_lidar_points = (unsigned int*)(riscv_args + 64);
@@ -212,27 +211,33 @@ int8_t* riscv_preprocess(float* lidar_points, int n_points, float z_offset, int 
     int* arg_input_quant_scale = (int*)(riscv_args + 88);
     *arg_input_quant_scale = input_quant_scale;
 
+    volatile int* riscv_offsets = (volatile int*)ralloc();
+    volatile unsigned int* arg_offsets = (volatile unsigned int*)(riscv_args + 96);
+    *arg_offsets = (long)riscv_offsets - (long)dram;
+    volatile int8_t* riscv_intensities = (volatile int8_t*)ralloc();
+    volatile unsigned int* arg_intensities = (volatile unsigned int*)(riscv_args + 104);
+    *arg_intensities = (long)riscv_intensities - (long)dram;
+
     std::chrono::system_clock::time_point t2 = std::chrono::system_clock::now();
     run_riscv();
     std::chrono::system_clock::time_point t3 = std::chrono::system_clock::now();
     double d1 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count() / 1000.0);
     printf("riscv time[ms]: %lf\n", d1);
 
-    unsigned int* lidar_image_addr = (unsigned int*)(riscv_args + 96);
-    printf("lidar image addr: %ld\n", (long)*lidar_image_addr);
-    int8_t* lidar_image = (int8_t*)(base_addr + LIDAR_IMAGE_BUFFER);
-    unsigned long long* dst = (unsigned long long*)lidar_image;
-    unsigned long long* src = (unsigned long long*)riscv_lidar_image;
+    n_points = *arg_n_points;
+    for(int i=0; i<n_points; ++i){
+        int offset = riscv_offsets[i];
+        int8_t intensity0 = lidar_image[offset];
+        int8_t intensity1 = riscv_intensities[i];
+        lidar_image[offset] = (intensity0>intensity1? intensity0 : intensity1);
+    }
+
     std::chrono::system_clock::time_point t4 = std::chrono::system_clock::now();
-    std::memcpy(dst, src, 1152*1152*24);
-    //for(int i=0; i<1152*1152*24/8; ++i){
-        //dst[i] = src[i];
-        ////lidar_image[i] = riscv_lidar_image[i];
-    //}
-    std::chrono::system_clock::time_point t5 = std::chrono::system_clock::now();
-    double d2 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t5 - t4).count() / 1000.0);
+    double d2 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count() / 1000.0);
     printf("copy2 time[ms]: %lf\n", d2);
-    rfree(riscv_lidar_points);
+    rfree((float*)riscv_lidar_points);
+    rfree((int*)riscv_offsets);
+    rfree((int8_t*)riscv_intensities);
 
     return lidar_image;
 }
