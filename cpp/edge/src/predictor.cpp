@@ -193,6 +193,7 @@ int8_t* riscv_preprocess(float* lidar_points, int n_points, float z_offset, int 
         tmp[i] = ZERO;
     }
     volatile float* riscv_lidar_points = (volatile float*)ralloc();
+    printf("n_points*5 = %d\n", n_points*5);
     for(int i=0; i<n_points*5; ++i){
         riscv_lidar_points[i] = lidar_points[i];
     }
@@ -590,7 +591,7 @@ void riscv_refine_predictions(float* preds, int8_t* input_image, float* centroid
     *arg_confidence = (long)riscv_confidence - (long)dram;
     volatile unsigned int* arg_n_preds = (volatile unsigned int*)(riscv_args + 88);
     //*arg_n_preds = (long)riscv_n_preds - (long)dram;
-    printf("pre n_preds: %d\n", *n_preds);
+    //printf("pre n_preds: %d\n", *n_preds);
     *arg_n_preds = *n_preds;
     volatile float* arg_ego_translation = (volatile float*)(riscv_args + 96);
     arg_ego_translation[0] = ego_translation[0];
@@ -617,7 +618,7 @@ void riscv_refine_predictions(float* preds, int8_t* input_image, float* centroid
     run_riscv();
 
     *n_preds = *arg_n_preds;
-    printf("n_preds: %d\n", *n_preds);
+    //printf("n_preds: %d\n", *n_preds);
     for(int i=0; i<*n_preds*3; ++i){
         preds[i] = riscv_preds[i];
     }
@@ -771,56 +772,32 @@ void merge_prev_preds(float* pred, float ego_translation[3], float ego_rotation[
     float dr1[4] = {};
     composite_quaternions((float*)qt1, iqt, dr1);
 
-    float* rpred0 = (float*)alloc();
-    float mx[3][3] = {};
-    quaternion_to_matrix(dr0, mx);
-    for(int y=0; y<1024; ++y){
-        for(int x=0; x<1024; ++x){
-            float dxyz[3] = {(float)(x - 512), (float)(y - 512), 0.0};
-            float sxyz[3] = {};
-            rotate(dxyz, sxyz, mx);
-            int sx = (int)(sxyz[0] + dtx0*10 + 0.5) + 512;
-            int sy = (int)(sxyz[1] - dty0*10 + 0.5) + 512;
-            if(sx>=0 && sx<1024 && sy>=0 && sy<1024){
-                rpred0[y*1024 + x] = pred0[sy*1024 + sx];
-            }
-            else{
-                rpred0[y*1024 + x] = 0;
-            }
-        }
-    }
-
-    float* rpred1 = (float*)alloc();
-    quaternion_to_matrix(dr1, mx);
-    for(int y=0; y<1024; ++y){
-        for(int x=0; x<1024; ++x){
-            float dxyz[3] = {(float)(x - 512), (float)(y - 512), 0.0};
-            float sxyz[3] = {};
-            rotate(dxyz, sxyz, mx);
-            int sx = (int)(sxyz[0] + dtx1*10 + 0.5) + 512;
-            int sy = (int)(sxyz[1] - dty1*10 + 0.5) + 512;
-            if(sx>=0 && sx<1024 && sy>=0 && sy<1024){
-                rpred1[y*1024 + x] = pred1[sy*1024 + sx];
-            }
-            else{
-                rpred1[y*1024 + x] = 0;
-            }
-        }
-    }
+    float mx0[3][3] = {};
+    float mx1[3][3] = {};
+    quaternion_to_matrix(dr0, mx0);
+    quaternion_to_matrix(dr1, mx1);
 
     for(int y=0; y<1024; ++y){
         for(int x=0; x<1024; ++x){
+            float dxyz[3] = {(float)(x - 512), (float)(y - 512), 0.0f};
+            float sxyz0[3] = {};
+            rotate(dxyz, sxyz0, mx0);
+            int sx0 = (int)(sxyz0[0] + dtx0*10.0f + 0.5f) + 512;
+            int sy0 = (int)(sxyz0[1] - dty0*10.0f + 0.5f) + 512;
+            float v1 = (sx0>=0 && sx0<1024 && sy0>=0 && sy0<1024)? pred0[sy0*1024 + sx0] : 0.0f;
+
+            float sxyz1[3] = {};
+            rotate(dxyz, sxyz1, mx1);
+            int sx1 = (int)(sxyz1[0] + dtx1*10.0f + 0.5f) + 512;
+            int sy1 = (int)(sxyz1[1] - dty1*10.0f + 0.5f) + 512;
+            float v2 = (sx1>=0 && sx1<1024 && sy1>=0 && sy1<1024)? pred1[sy1*1024 + sx1] : 0.0f;
+
             float v0 = pred[y*1024 + x];
-            float v1 = rpred0[y*1024 + x];
-            float v2 = rpred1[y*1024 + x];
             float a = v0>v2? v0 : v2;
             float b = a>v1? v1 : a;
             pred[y*1024 + x] = (b<v0? v0 : b);
         }
     }
-
-    mfree((void*)rpred0);
-    mfree((void*)rpred1);
 }
 
 void run_dpu(vart::Runner* runner, int8_t* input_image, int8_t* pred){
@@ -1022,7 +999,7 @@ int main(int argc, char* argv[]){
             return -1;
         }
 
-        iram = (unsigned int*)mmap(NULL, 0x2000, PROT_READ | PROT_WRITE, MAP_SHARED, ddr_fd, IMEM_BASE);
+        iram = (unsigned int*)mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED, ddr_fd, IMEM_BASE);
         if (iram == MAP_FAILED){
             perror("mmap iram");
             close(ddr_fd);

@@ -76,7 +76,7 @@ void preprocess(volatile float* lidar_points, volatile int* n_points, float z_of
     float scale = (float)(1 << input_quant_scale);
     for(int i=0; i<*n_points; ++i){
         int x = (int)(lidar_points[0]*10.0f+0.5f) + 576;
-        int y = (int)(-lidar_points[1]*10.0f+0.5f) + 576;
+        int y = (int)(lidar_points[1]*-10.0f+0.5f) + 576;
         int z = (int)((lidar_points[2]+z_offset)*5.0f+0.5f);
         if(x>=0 && x<1152 && y>=0 && y<1152 && z>=0 && z<24){
             lidar_xs[0] = x;
@@ -94,7 +94,7 @@ void preprocess(volatile float* lidar_points, volatile int* n_points, float z_of
         lidar_points += 5;
     }
     for(int i=0; i<n_valid_points; ++i){
-        offsets[0] = ys[0]*LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH + xs[0]*LIDAR_IMAGE_DEPTH + zs[0];
+        offsets[0] = ys[0]*(LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH) + xs[0]*LIDAR_IMAGE_DEPTH + zs[0];
         xs += 3;
         ys += 3;
         zs += 3;
@@ -212,7 +212,7 @@ void refine_predictions(volatile float* preds, volatile int8_t* input_image, vol
     }
 
     float mx[3][3] = {};
-    quaternion_to_matrix(ego_rotation, mx);
+    quaternion_to_matrix((float*)ego_rotation, mx);
     for(int i=0; i<*n_preds; ++i){
         float xyz[3] = { centroids[i*2] / 10.0f - 51.2f, -centroids[i*2+1] / 10.0f + 51.2f, 1.5f};
         float rxyz[3] = {};
