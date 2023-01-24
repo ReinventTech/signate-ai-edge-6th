@@ -1,5 +1,5 @@
 
-CFLAGS := -Os -Wno-implicit
+CFLAGS := -O2 -Wno-implicit
 CFLAGS += -fno-builtin-printf -fno-common
 
 SRC = riscv_predictor.c start.s

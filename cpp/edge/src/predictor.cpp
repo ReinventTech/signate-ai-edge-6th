@@ -28,7 +28,7 @@ typedef signed char int8_t;
 #define N_BUFFERS 18
 #define BUFFERS_AVAIL_ADDR_OFFSET 251658240 /* 240*1024*1024 */
 #define FUNC_PREPROCESS 0
-#define FUNC_SUPPRESS 1
+#define FUNC_REFINE 1
 #define REG(address) *(volatile unsigned int*)(address)
 #define REGF(address) *(volatile float*)(address)
 #define GPIO_BASE (0x80010000)
@@ -64,7 +64,7 @@ uintptr_t LIDAR_IMAGE_BUFFER = 180*1024*1024;
 uintptr_t RECORD_BUFFER = 220*1024*1024;
 uintptr_t RISCV_ARGS_BUFFER = 239*1024*1024;
 volatile unsigned int* iram = 0;
-char* dram = 0;
+volatile char* dram = 0;
 volatile unsigned int* gpio = 0;
 int ddr_fd = 0;
 struct pollfd pfd;
@@ -183,7 +183,14 @@ void run_riscv(){
     REG(gpio) = 0x00; // Reset on
 }
 
+unsigned long long ZERO = 0;
+
 int8_t* riscv_preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale){
+    int8_t* riscv_lidar_image = (int8_t*)(dram + LIDAR_IMAGE_BUFFER);
+    unsigned long long* tmp = (unsigned long long*)riscv_lidar_image;
+    for(int i=0; i<1152*1152*24/8; ++i){
+        tmp[i] = ZERO;
+    }
     std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
     float* riscv_lidar_points = (float*)ralloc();
     for(int i=0; i<n_points*5; ++i){
@@ -212,7 +219,6 @@ int8_t* riscv_preprocess(float* lidar_points, int n_points, float z_offset, int 
     printf("riscv time[ms]: %lf\n", d1);
 
     unsigned int* lidar_image_addr = (unsigned int*)(riscv_args + 96);
-    int8_t* riscv_lidar_image = (int8_t*)(dram + *lidar_image_addr);
     printf("lidar image addr: %ld\n", (long)*lidar_image_addr);
     int8_t* lidar_image = (int8_t*)(base_addr + LIDAR_IMAGE_BUFFER);
     unsigned long long* dst = (unsigned long long*)lidar_image;
@@ -285,72 +291,33 @@ float* sigmoid(int* pred, int output_quant_scale){
     return sigmoid_pred;
 }
 
-void riscv_suppress_predictions_without_lidar_points(int8_t* input_image, float* centroid, float* confidence, int n_preds){
-    std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
-
-    volatile float* riscv_centroid = (volatile float*)ralloc();
-    volatile float* riscv_confidence = (volatile float*)ralloc();
-
-    for(int i=0; i<n_preds*2; ++i){
-        riscv_centroid[i] = centroid[i];
-    }
-    for(int i=0; i<n_preds; ++i){
-        riscv_confidence[i] = confidence[i];
-    }
-
-    char* riscv_args = 
-        (char*)(dram + RISCV_ARGS_BUFFER);
-    unsigned int* func = (unsigned int*)riscv_args;
-    *func = FUNC_SUPPRESS;
-    unsigned int* arg_centroid = (unsigned int*)(riscv_args + 72);
-    *arg_centroid = (long)riscv_centroid - (long)dram;
-    unsigned int* arg_confidence = (unsigned int*)(riscv_args + 80);
-    *arg_confidence = (long)riscv_confidence - (long)dram;
-    int* arg_n_preds = (int*)(riscv_args + 88);
-    *arg_n_preds = n_preds;
-
-    run_riscv();
-
-    for(int i=0; i<n_preds; ++i){
-        confidence[i] = riscv_confidence[i];
-    }
-
-    rfree((float*)riscv_centroid);
-    rfree((float*)riscv_confidence);
-    std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
-    double d0 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0);
-    printf("riscv suppress time[ms]: %lf\n", d0);
+void quaternion_to_matrix(float qt[4], float matrix[3][3]){
+    float qt0_2 = qt[0] * qt[0];
+    float qt1_2 = qt[1] * qt[1];
+    float qt2_2 = qt[2] * qt[2];
+    float qt3_2 = qt[3] * qt[3];
+    float qt12 = qt[1] * qt[2];
+    float qt13 = qt[1] * qt[3];
+    float qt23 = qt[2] * qt[3];
+    float qt01 = qt[0] * qt[1];
+    float qt02 = qt[0] * qt[2];
+    float qt03 = qt[0] * qt[3];
+    float s = 2.0 / (qt0_2 + qt1_2 + qt2_2 + qt3_2);
+    matrix[0][0] = 1.0f - s * (qt2_2 + qt3_2);
+    matrix[0][1] = s * (qt12 - qt03);
+    matrix[0][2] = s * (qt13 + qt02);
+    matrix[1][0] = s * (qt12 + qt03);
+    matrix[1][1] = 1.0f - s * (qt1_2 + qt3_2);
+    matrix[1][2] = s * (qt23 - qt01);
+    matrix[2][0] = s * (qt13 - qt02);
+    matrix[2][1] = s * (qt23 + qt01);
+    matrix[2][2] = 1.0f - s * (qt1_2 + qt2_2);
 }
 
-void suppress_predictions_without_lidar_points(int8_t* input_image, float* centroid, float* confidence, int n_preds){
-    if(use_riscv){
-        riscv_suppress_predictions_without_lidar_points(
-            input_image, centroid, confidence, n_preds
-        );
-        return;
-    }
-    for(int i=0; i<n_preds; ++i){
-        int x = (int)(centroid[i*2]+0.5) + 64;
-        int y = (int)(centroid[i*2+1]+0.5) + 64;
-        BOOL has_points = false;
-        int sx = x>7? (x-7) : 0;
-        int sy = y>7? (y-7) : 0;
-        int ex = x<LIDAR_IMAGE_WIDTH-7? (x+7) : (LIDAR_IMAGE_WIDTH-1);
-        int ey = y<LIDAR_IMAGE_HEIGHT-7? (y+7) : (LIDAR_IMAGE_HEIGHT-1);
-        for(int ry=sy; ry<ey; ++ry){
-            int offset = ry * LIDAR_IMAGE_WIDTH;
-            for(int rx=sx; rx<ex; ++rx){
-                if(input_image[offset+rx]>0){
-                    has_points = true;
-                    break;
-                }
-            }
-            if(has_points) break;
-        }
-        if(!has_points){
-            confidence[y*(LIDAR_IMAGE_WIDTH)+x] *= 0.1;
-        }
-    }
+void rotate(float inp[3], float outp[3], float mx[3][3]){
+    outp[0] = mx[0][0]*inp[0] + mx[0][1]*inp[1] + mx[0][2]*inp[2];
+    outp[1] = mx[1][0]*inp[0] + mx[1][1]*inp[1] + mx[1][2]*inp[2];
+    //outp[2] = mx[2][0]*inp[0] + mx[2][1]*inp[1] + mx[2][2]*inp[2];
 }
 
 BOOL* get_pedestrian_mask(float* pedestrian_fy){
@@ -524,35 +491,6 @@ void postprocess(float* pedestrian_pred, float* vehicle_pred, float* pedestrian_
     mfree((void*)vehicle_areas);
 }
 
-void quaternion_to_matrix(float qt[4], float matrix[3][3]){
-    float qt0_2 = qt[0] * qt[0];
-    float qt1_2 = qt[1] * qt[1];
-    float qt2_2 = qt[2] * qt[2];
-    float qt3_2 = qt[3] * qt[3];
-    float qt12 = qt[1] * qt[2];
-    float qt13 = qt[1] * qt[3];
-    float qt23 = qt[2] * qt[3];
-    float qt01 = qt[0] * qt[1];
-    float qt02 = qt[0] * qt[2];
-    float qt03 = qt[0] * qt[3];
-    float s = 2.0 / (qt0_2 + qt1_2 + qt2_2 + qt3_2);
-    matrix[0][0] = 1.0f - s * (qt2_2 + qt3_2);
-    matrix[0][1] = s * (qt12 - qt03);
-    matrix[0][2] = s * (qt13 + qt02);
-    matrix[1][0] = s * (qt12 + qt03);
-    matrix[1][1] = 1.0f - s * (qt1_2 + qt3_2);
-    matrix[1][2] = s * (qt23 - qt01);
-    matrix[2][0] = s * (qt13 - qt02);
-    matrix[2][1] = s * (qt23 + qt01);
-    matrix[2][2] = 1.0f - s * (qt1_2 + qt2_2);
-}
-
-void rotate(float inp[3], float outp[3], float mx[3][3]){
-    outp[0] = mx[0][0]*inp[0] + mx[0][1]*inp[1] + mx[0][2]*inp[2];
-    outp[1] = mx[1][0]*inp[0] + mx[1][1]*inp[1] + mx[1][2]*inp[2];
-    //outp[2] = mx[2][0]*inp[0] + mx[2][1]*inp[1] + mx[2][2]*inp[2];
-}
-
 void scale_rotate_translate(float* centroids, int n_centroids, float ego_translation[3], float ego_rotation[4]){
     float mx[3][3] = {};
     quaternion_to_matrix(ego_rotation, mx);
@@ -621,24 +559,128 @@ void sort_predictions(float* preds, int n_preds){
     mfree((void*)sorted_preds);
 }
 
-void refine_predictions(float* preds, int* n_preds, float ego_translation[3], float max_dist, float fuzzy_dist, float fuzzy_rate, float refine_dist, int n_cutoff, bool is_pedestrian){
+void riscv_refine_predictions(float* preds, int8_t* input_image, float* centroids, float* confidence, int* n_preds, float ego_translation[3], float ego_rotation[4], float max_dist, float fuzzy_dist, float fuzzy_rate, float refine_dist, int n_cutoff, bool is_pedestrian){
+    volatile float* riscv_preds = (volatile float*)ralloc();
+    volatile float* riscv_centroids = (volatile float*)ralloc();
+    volatile float* riscv_confidence = (volatile float*)ralloc();
+    //volatile int* riscv_n_preds = (volatile int*)ralloc();
+
+    for(int i=0; i<*n_preds*2; ++i){
+        riscv_centroids[i] = centroids[i];
+    }
+    for(int i=0; i<*n_preds; ++i){
+        riscv_confidence[i] = confidence[i];
+    }
+    //*riscv_n_preds = *n_preds;
+
+    volatile char* riscv_args = 
+        (volatile char*)(dram + RISCV_ARGS_BUFFER);
+    volatile unsigned int* func = (volatile unsigned int*)riscv_args;
+    *func = FUNC_REFINE;
+    volatile unsigned int* arg_preds = (volatile unsigned int*)(riscv_args + 64);
+    *arg_preds = (long)riscv_preds - (long)dram;
+    volatile unsigned int* arg_centroids = (volatile unsigned int*)(riscv_args + 72);
+    *arg_centroids = (long)riscv_centroids - (long)dram;
+    volatile unsigned int* arg_confidence = (volatile unsigned int*)(riscv_args + 80);
+    *arg_confidence = (long)riscv_confidence - (long)dram;
+    volatile unsigned int* arg_n_preds = (volatile unsigned int*)(riscv_args + 88);
+    //*arg_n_preds = (long)riscv_n_preds - (long)dram;
+    printf("pre n_preds: %d\n", *n_preds);
+    *arg_n_preds = *n_preds;
+    volatile float* arg_ego_translation = (volatile float*)(riscv_args + 96);
+    arg_ego_translation[0] = ego_translation[0];
+    arg_ego_translation[1] = ego_translation[1];
+    arg_ego_translation[2] = ego_translation[2];
+    volatile float* arg_ego_rotation = (volatile float*)(riscv_args + 112);
+    arg_ego_rotation[0] = ego_rotation[0];
+    arg_ego_rotation[1] = ego_rotation[1];
+    arg_ego_rotation[2] = ego_rotation[2];
+    arg_ego_rotation[3] = ego_rotation[3];
+    volatile float* arg_max_dist = (volatile float*)(riscv_args + 128);
+    *arg_max_dist = max_dist;
+    volatile float* arg_fuzzy_dist = (volatile float*)(riscv_args + 136);
+    *arg_fuzzy_dist = fuzzy_dist;
+    volatile float* arg_fuzzy_rate = (volatile float*)(riscv_args + 144);
+    *arg_fuzzy_rate = fuzzy_rate;
+    volatile float* arg_refine_dist = (volatile float*)(riscv_args + 152);
+    *arg_refine_dist = refine_dist;
+    volatile int* arg_n_cutoff = (volatile int*)(riscv_args + 160);
+    *arg_n_cutoff = n_cutoff;
+    volatile bool* arg_is_pedestrian = (volatile bool*)(riscv_args + 168);
+    *arg_is_pedestrian = is_pedestrian;
+
+    run_riscv();
+
+    *n_preds = *arg_n_preds;
+    printf("n_preds: %d\n", *n_preds);
+    for(int i=0; i<*n_preds*3; ++i){
+        preds[i] = riscv_preds[i];
+    }
+
+    rfree((float*)riscv_preds);
+    rfree((float*)riscv_centroids);
+    rfree((float*)riscv_confidence);
+    //rfree((float*)riscv_n_preds);
+}
+
+void refine_predictions(float* preds, int8_t* input_image, float* centroids, float* confidence, int* n_preds, float ego_translation[3], float ego_rotation[4], float max_dist, float fuzzy_dist, float fuzzy_rate, float refine_dist, int n_cutoff, bool is_pedestrian){
+    if(use_riscv){
+        riscv_refine_predictions(preds, input_image, centroids, confidence, n_preds, ego_translation, ego_rotation, max_dist, fuzzy_dist, fuzzy_rate, refine_dist, n_cutoff, is_pedestrian);
+        return;
+    }
+
+    for(int i=0; i<*n_preds; ++i){
+        int x = (int)(centroids[i*2]+0.5) + 64;
+        int y = (int)(centroids[i*2+1]+0.5) + 64;
+        BOOL has_points = false;
+        int sx = x>7? (x-7) : 0;
+        int sy = y>7? (y-7) : 0;
+        int ex = x<LIDAR_IMAGE_WIDTH-7? (x+7) : (LIDAR_IMAGE_WIDTH-1);
+        int ey = y<LIDAR_IMAGE_HEIGHT-7? (y+7) : (LIDAR_IMAGE_HEIGHT-1);
+        for(int ry=sy; ry<ey; ++ry){
+            int offset = ry * LIDAR_IMAGE_WIDTH;
+            for(int rx=sx; rx<ex; ++rx){
+                if(input_image[offset+rx]>0){
+                    has_points = true;
+                    break;
+                }
+            }
+            if(has_points) break;
+        }
+        if(!has_points){
+            confidence[y*(LIDAR_IMAGE_WIDTH)+x] *= 0.1;
+        }
+    }
+
+    float mx[3][3] = {};
+    quaternion_to_matrix(ego_rotation, mx);
+    for(int i=0; i<*n_preds; ++i){
+        float xyz[3] = { centroids[i*2] / 10.0f - 51.2f, -centroids[i*2+1] / 10.0f + 51.2f, 1.5};
+        float rxyz[3] = {};
+        rotate(xyz, rxyz, mx);
+        rxyz[0] += ego_translation[0];
+        rxyz[1] += ego_translation[1];
+        centroids[i*2] = rxyz[0];
+        centroids[i*2+1] = rxyz[1];
+    }
+
     float* refined_preds = (float*)alloc();
     int n_refined_preds = 0;
     for(int i=0; i<*n_preds; ++i){
-        float dx = preds[i*3] - ego_translation[0];
-        float dy = preds[i*3+1] - ego_translation[1];
+        float dx = centroids[i*2] - ego_translation[0];
+        float dy = centroids[i*2+1] - ego_translation[1];
         float d = sqrt(dx*dx + dy*dy);
         if(d>max_dist) continue;
-        refined_preds[n_refined_preds*5+1] = 1e10;
-        refined_preds[n_refined_preds*5+3] = preds[i*3];
-        refined_preds[n_refined_preds*5+4] = preds[i*3+1];
+        refined_preds[n_refined_preds*5+1] = 1e10f;
+        refined_preds[n_refined_preds*5+3] = centroids[i*2];
+        refined_preds[n_refined_preds*5+4] = centroids[i*2+1];
         if(d>fuzzy_dist){
-            refined_preds[n_refined_preds*5] = preds[i*3+2] * fuzzy_rate;
-            refined_preds[n_refined_preds*5+2] = preds[i*3+2] * fuzzy_rate;
+            refined_preds[n_refined_preds*5] = confidence[i] * fuzzy_rate;
+            refined_preds[n_refined_preds*5+2] = confidence[i] * fuzzy_rate;
         }
         else{
-            refined_preds[n_refined_preds*5] = preds[i*3+2];
-            refined_preds[n_refined_preds*5+2] = preds[i*3+2];
+            refined_preds[n_refined_preds*5] = confidence[i];
+            refined_preds[n_refined_preds*5+2] = confidence[i];
         }
         ++n_refined_preds;
     }
@@ -658,7 +700,7 @@ void refine_predictions(float* preds, int* n_preds, float ego_translation[3], fl
             float d = sqrt(dx*dx + dy*dy);
             refined_preds[n*5+1] = (refined_preds[n*5+1]>d? d : refined_preds[n*5+1]);
             if (is_pedestrian){
-                if(refined_preds[n*5+1]==0.0){
+                if(refined_preds[n*5+1]==0.0f){
                     refined_preds[n*5] = refined_preds[n*5+2];
                 }
                 else{
@@ -667,8 +709,8 @@ void refine_predictions(float* preds, int* n_preds, float ego_translation[3], fl
                 }
             }
             else{
-                if(refined_preds[n*5+1]<0.4){
-                    refined_preds[n*5] = refined_preds[n*5+2] * 0.01;
+                if(refined_preds[n*5+1]<0.4f){
+                    refined_preds[n*5] = refined_preds[n*5+2] * 0.01f;
                 }
                 else{
                     float r = m * (refined_preds[n*5+1]>refine_dist? refine_dist: refined_preds[n*5+1]);
@@ -677,6 +719,7 @@ void refine_predictions(float* preds, int* n_preds, float ego_translation[3], fl
             }
         }
     }
+    *n_preds = *n_preds>50? 50 : *n_preds;
     mfree((void*)refined_preds);
 }
 
@@ -847,9 +890,6 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
     std::chrono::system_clock::time_point t5 = std::chrono::system_clock::now();
     //printf("pp n %d %d\n", *n_pedestrians, *n_vehicles);
 
-    suppress_predictions_without_lidar_points(input_image, pedestrian_centroids, pedestrian_confidence, *n_pedestrians);
-    std::chrono::system_clock::time_point t6 = std::chrono::system_clock::now();
-
     // update records
     int record_offset = (frame_idx%2) * (1024*1024*2+8);
     for(int i=0; i<1024*1024; ++i){
@@ -870,35 +910,15 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
 
     mfree(pedestrian_pred);
     mfree(vehicle_pred);
+    std::chrono::system_clock::time_point t6 = std::chrono::system_clock::now();
 
-    std::chrono::system_clock::time_point t7 = std::chrono::system_clock::now();
-
-    scale_rotate_translate(pedestrian_centroids, *n_pedestrians, ego_translation, ego_rotation);
-    scale_rotate_translate(vehicle_centroids, *n_vehicles, ego_translation, ego_rotation);
-
-    for(int i=0; i<*n_pedestrians; ++i){
-        pedestrian_preds[i*3] = pedestrian_centroids[i*2];
-        pedestrian_preds[i*3+1] = pedestrian_centroids[i*2+1];
-        pedestrian_preds[i*3+2] = pedestrian_confidence[i];
-    }
-
+    refine_predictions(pedestrian_preds, input_image, pedestrian_centroids, pedestrian_confidence, n_pedestrians, ego_translation, ego_rotation, 40, 39, 0.95, 0.8, 55, true);
+    refine_predictions(vehicle_preds, input_image, vehicle_centroids, vehicle_confidence, n_vehicles, ego_translation, ego_rotation, 50, 49.5, 0.9, 2.2, 60, false);
     mfree(pedestrian_centroids);
     mfree(pedestrian_confidence);
-
-    for(int i=0; i<*n_vehicles; ++i){
-        vehicle_preds[i*3] = vehicle_centroids[i*2];
-        vehicle_preds[i*3+1] = vehicle_centroids[i*2+1];
-        vehicle_preds[i*3+2] = vehicle_confidence[i];
-    }
     mfree(vehicle_centroids);
     mfree(vehicle_confidence);
-    std::chrono::system_clock::time_point t8 = std::chrono::system_clock::now();
-
-    refine_predictions(pedestrian_preds, n_pedestrians, ego_translation, 40, 39, 0.95, 0.8, 55, true);
-    refine_predictions(vehicle_preds, n_vehicles, ego_translation, 50, 49.5, 0.9, 2.2, 60, false);
-    *n_pedestrians = *n_pedestrians>50? 50 : *n_pedestrians;
-    *n_vehicles = *n_vehicles>50? 50 : *n_vehicles;
-    std::chrono::system_clock::time_point t9 = std::chrono::system_clock::now();
+    std::chrono::system_clock::time_point t7 = std::chrono::system_clock::now();
 
     double d0 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0);
     double d1 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count() / 1000.0);
@@ -907,10 +927,8 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
     double d4 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t5 - t4).count() / 1000.0);
     double d5 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t6 - t5).count() / 1000.0);
     double d6 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t7 - t6).count() / 1000.0);
-    double d7 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t8 - t7).count() / 1000.0);
-    double d8 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t9 - t8).count() / 1000.0);
-    double d_total = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t9 - t0).count() / 1000.0);
-    printf("time[ms] total:%lf preproc:%lf dpu:%lf sigmoid:%lf affine:%lf postproc:%lf suppress:%lf record:%lf tx:%lf refine:%lf\n", d_total, d0, d1, d2, d3, d4, d5, d6, d7, d8);
+    double d_total = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t7 - t0).count() / 1000.0);
+    printf("time[ms] total:%lf preproc:%lf dpu:%lf sigmoid:%lf affine:%lf postproc:%lf record:%lf refine:%lf\n", d_total, d0, d1, d2, d3, d4, d5, d6);
 }
 
 void predict_scene(char* output_path, char* xmodel_path){
@@ -999,7 +1017,7 @@ int main(int argc, char* argv[]){
             return -1;
         }
 
-        iram = (unsigned int*)mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED, ddr_fd, IMEM_BASE);
+        iram = (unsigned int*)mmap(NULL, 0x2000, PROT_READ | PROT_WRITE, MAP_SHARED, ddr_fd, IMEM_BASE);
         if (iram == MAP_FAILED){
             perror("mmap iram");
             close(ddr_fd);
