@@ -67,10 +67,13 @@ void preprocess(volatile float* lidar_points, volatile int* n_points, float z_of
     for(int i=0; i<*n_points; ++i){
         int x = (int)(lidar_points[0]*10.0f+0.5f) + 576;
         int y = (int)(lidar_points[1]*-10.0f+0.5f) + 576;
-        int z = (int)((lidar_points[2]+z_offset)*5.0f+0.5f);
+        /*int z = (int)((lidar_points[2]+z_offset)*5.0f+0.5f);*/
+        /* z_offset = 3.7 */
+        int z = (int)(lidar_points[2]*5.0f+19.0f);
         if(x>=0 && x<1152 && y>=0 && y<1152 && z>=0 && z<24){
             float intensity = lidar_points[3]*scale+0.5f;
-            intensities[0] = (intensity>127.0f? 127 : (int8_t)intensity);
+            /*intensities[0] = (intensity>127.0f? 127 : (int8_t)intensity);*/
+            intensities[0] = (int8_t)intensity;
             if(intensities[0]==0) intensities[0] = 1;
 
             offsets[0] = y*(LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH) + x*LIDAR_IMAGE_DEPTH + z;
