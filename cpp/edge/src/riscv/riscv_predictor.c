@@ -7,16 +7,13 @@ typedef char bool;
 #define REGC(address) *(volatile char*)(address)
 #define DMEM_BASE  (0x10000000)
 #define GPIO_BASE  (0x80030000)
-
-#define LIDAR_IMAGE_WIDTH 1152
-#define LIDAR_IMAGE_HEIGHT 1152
+#define LIDAR_IMAGE_WIDTH 1024
+#define LIDAR_IMAGE_HEIGHT 1024
 #define LIDAR_IMAGE_DEPTH 24
 #define N_BUFFERS 22
 #define BUFFERS_AVAIL_ADDR_OFFSET 251658240 /* 8*30*1024*1024 */
-
 #define true 1
 #define false 0
-
 #define FUNC_PREPROCESS 0
 #define FUNC_REFINE 1
 
@@ -75,10 +72,10 @@ void preprocess(volatile float* lidar_points, volatile int* n_points, float z_of
         /* z_offset = 3.7 */
         int z = (int)(lidar_points[2]*5.0f+19.0f);
         if(x>=0 && x<1024 && y>=0 && y<1024 && z>=0 && z<24){
-            float intensity = lidar_points[3]*scale+0.5f;
+            float intensity = lidar_points[3]*scale;//+0.5f;
             /*intensities[0] = (intensity>127.0f? 127 : (int8_t)intensity);*/
-            intensities[0] = (int8_t)intensity;
-            if(intensities[0]==0) intensities[0] = 1;
+            intensities[0] = (int8_t)intensity + 1;
+            /*if(intensities[0]==0) intensities[0] = 1;*/
 
             offsets[0] = y*(1024*LIDAR_IMAGE_DEPTH) + x*LIDAR_IMAGE_DEPTH + z;
             ++offsets;

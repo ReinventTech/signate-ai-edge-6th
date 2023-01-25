@@ -26,8 +26,8 @@ typedef signed char i8;
 typedef unsigned char u8;
 typedef unsigned long long u64;
 
-#define LIDAR_IMAGE_WIDTH 1152
-#define LIDAR_IMAGE_HEIGHT 1152
+#define LIDAR_IMAGE_WIDTH 1024
+#define LIDAR_IMAGE_HEIGHT 1024
 #define LIDAR_IMAGE_DEPTH 24
 #define N_BUFFERS 22
 #define BUFFERS_AVAIL_ADDR_OFFSET 251658240 /* 8*30*1024*1024 */
@@ -38,7 +38,6 @@ typedef unsigned long long u64;
 #define GPIO_BASE (0x80010000)
 #define IMEM_BASE (0x82000000)
 #define DMEM_BASE (0x10000000)
-
 
 char* base_addr = 0;
 bool use_riscv = false;
@@ -389,8 +388,8 @@ Bits get_pedestrian_mask(u8* pedestrian_fy){
     for(int i=0; i<1024*1024/64; ++i){
         u64 mask0 = 0, mask1 = 0;
         for(int j=0; j<64; ++j){
-            mask0 |= ((u64)(pedestrian_fy[j]>124)) << j;
-            mask1 |= ((u64)(pedestrian_fy[j]>108)) << j;
+            mask0 |= ((u64)(pedestrian_fy[j]>126)) << j;
+            mask1 |= ((u64)(pedestrian_fy[j]>109)) << j;
         }
         bits0.data[i] = pedestrian_bits.data[i] = mask0;
         bits1.data[i] = mask1;
@@ -554,7 +553,7 @@ void postprocess(u8* quant_pedestrian_pred, u8* quant_vehicle_pred, float* pedes
 
     int n_filtered_pedestrians = 0;
     for(int i=0; i<*n_pedestrians; ++i){
-        if(pedestrian_areas[i]>78 && pedestrian_confidence[i]>0.28){
+        if(pedestrian_areas[i]>78 && pedestrian_confidence[i]>0.37){
             pedestrian_areas[*n_pedestrians+n_filtered_pedestrians] = pedestrian_areas[i];
             pedestrian_confidence[*n_pedestrians+n_filtered_pedestrians] = pedestrian_confidence[i];
             pedestrian_centroid[(*n_pedestrians+n_filtered_pedestrians)*2] = pedestrian_centroid[i*2];
@@ -940,17 +939,21 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
     std::chrono::system_clock::time_point t2 = std::chrono::system_clock::now();
     last_dpu_frame_idx = frame_idx;
 
-    while(last_postprocess_frame_idx<frame_idx-1){
-        std::this_thread::sleep_for(std::chrono::microseconds(100));
-    }
+    //while(last_postprocess_frame_idx<frame_idx-1){
+        //std::this_thread::sleep_for(std::chrono::microseconds(100));
+    //}
     u8* quant_pedestrian_pred = (u8*)alloc();
     u8* quant_vehicle_pred = (u8*)alloc();
+    u8* src = (u8*)quant_pred;
+    u8* dst_pedestrian = quant_pedestrian_pred;
+    u8* dst_vehicle = quant_vehicle_pred;
     for(int y=0; y<1024; ++y){
         for(int x=0; x<1024; ++x){
-            int src = y*1024*2 + x*2;
-            int dst = y*1024 + x;
-            quant_pedestrian_pred[dst] = (int)quant_pred[src] + 128;
-            quant_vehicle_pred[dst] = (int)quant_pred[src+1] + 128;
+            dst_pedestrian[0] = src[0] ^ 128;
+            dst_vehicle[0] = src[1] ^ 128;
+            src += 2;
+            ++dst_pedestrian;
+            ++dst_vehicle;
         }
     }
     mfree(quant_pred);
@@ -975,12 +978,12 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
     mfree(quant_pedestrian_pred);
     mfree(quant_vehicle_pred);
 
-    last_postprocess_frame_idx = frame_idx;
+    //last_postprocess_frame_idx = frame_idx;
 
 
-    while(last_refine_frame_idx<frame_idx-1){
-        std::this_thread::sleep_for(std::chrono::microseconds(100));
-    }
+    //while(last_refine_frame_idx<frame_idx-1){
+        //std::this_thread::sleep_for(std::chrono::microseconds(100));
+    //}
     refine_predictions(pedestrian_preds, max_input_image, pedestrian_centroids, pedestrian_confidence, n_pedestrians, ego_translation, ego_rotation, 40, 39, 0.95, 0.8, 55, true);
     refine_predictions(vehicle_preds, max_input_image, vehicle_centroids, vehicle_confidence, n_vehicles, ego_translation, ego_rotation, 50, 49.5, 0.9, 2.2, 60, false);
     mfree(pedestrian_centroids);
@@ -998,7 +1001,7 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
     double d5 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t6 - t5).count() / 1000.0);
     double d_total = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t6 - t0).count() / 1000.0);
     printf("#%s time[ms] total:%lf preproc:%lf dpu:%lf crop:%lf affine:%lf postproc:%lf refine:%lf\n", frame_id.c_str(), d_total, d0, d1, d2, d3, d4, d5);
-    last_refine_frame_idx = frame_idx;
+    //last_refine_frame_idx = frame_idx;
 }
 
 void predict_scene(char* output_path, char* xmodel_path){
