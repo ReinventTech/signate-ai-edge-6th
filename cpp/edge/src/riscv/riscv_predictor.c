@@ -11,8 +11,8 @@ typedef char bool;
 #define LIDAR_IMAGE_WIDTH 1152
 #define LIDAR_IMAGE_HEIGHT 1152
 #define LIDAR_IMAGE_DEPTH 24
-#define N_BUFFERS 20
-#define BUFFERS_AVAIL_ADDR_OFFSET 234881024 /* 8*28*1024*1024 */
+#define N_BUFFERS 22
+#define BUFFERS_AVAIL_ADDR_OFFSET 251658240 /* 8*30*1024*1024 */
 
 #define true 1
 #define false 0
@@ -42,11 +42,13 @@ unsigned int BUFFERS[N_BUFFERS] = {
     8*17*1024*1024,
     8*18*1024*1024,
     8*19*1024*1024,
+    8*20*1024*1024,
+    8*21*1024*1024,
 };
 bool* BUFFERS_AVAIL = 0;
-unsigned int LIDAR_IMAGE_BUFFER = 8*20*1024*1024;
-unsigned int RECORD_BUFFER = 8*24*1024*1024;
-unsigned int RISCV_ARGS_BUFFER = 8*27*1024*1024;
+unsigned int LIDAR_IMAGE_BUFFER = 8*22*1024*1024;
+unsigned int RECORD_BUFFER = 8*26*1024*1024;
+unsigned int RISCV_ARGS_BUFFER = 8*29*1024*1024;
 
 void* alloc(){
     for(int i=0; i<N_BUFFERS; ++i){

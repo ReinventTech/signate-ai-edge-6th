@@ -23,8 +23,8 @@ typedef signed char int8_t;
 #define LIDAR_IMAGE_WIDTH 1152
 #define LIDAR_IMAGE_HEIGHT 1152
 #define LIDAR_IMAGE_DEPTH 24
-#define N_BUFFERS 20
-#define BUFFERS_AVAIL_ADDR_OFFSET 234881024 /* 8*28*1024*1024 */
+#define N_BUFFERS 22
+#define BUFFERS_AVAIL_ADDR_OFFSET 251658240 /* 8*30*1024*1024 */
 #define FUNC_PREPROCESS 0
 #define FUNC_REFINE 1
 #define REG(address) *(volatile unsigned int*)(address)
@@ -57,10 +57,12 @@ uintptr_t BUFFERS[N_BUFFERS] = {
     8*17*1024*1024,
     8*18*1024*1024,
     8*19*1024*1024,
+    8*20*1024*1024,
+    8*21*1024*1024,
 };
-uintptr_t LIDAR_IMAGE_BUFFER = 8*20*1024*1024;
-uintptr_t RECORD_BUFFER = 8*24*1024*1024;
-uintptr_t RISCV_ARGS_BUFFER = 8*27*1024*1024;
+uintptr_t LIDAR_IMAGE_BUFFER = 8*22*1024*1024;
+uintptr_t RECORD_BUFFER = 8*26*1024*1024;
+uintptr_t RISCV_ARGS_BUFFER = 8*29*1024*1024;
 volatile bool* BUFFERS_AVAIL = 0;
 volatile bool* RISCV_BUFFERS_AVAIL = 0;
 volatile unsigned int* iram = 0;
@@ -272,9 +274,8 @@ int8_t* preprocess(float* lidar_points, int n_points, float z_offset, int input_
         offset += 5;
     }
     int8_t* lidar_image = (int8_t*)(base_addr + LIDAR_IMAGE_BUFFER);
-    for(long long i=0; i<LIDAR_IMAGE_HEIGHT*LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH; ++i){
-        lidar_image[i] = 0;
-    }
+    unsigned long long* tmp = (unsigned long long*)lidar_image;
+    std::memset(tmp, 0, LIDAR_IMAGE_HEIGHT*LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH);
     for(int i=0; i<n_valid_points; ++i){
         int offset = lidar_ys[i]*LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH + lidar_xs[i]*LIDAR_IMAGE_DEPTH + lidar_zs[i];
         lidar_image[offset] = (lidar_image[offset]<intensities[i]? intensities[i] : lidar_image[offset]);
@@ -591,7 +592,6 @@ void riscv_refine_predictions(float* preds, int8_t* input_image, float* centroid
     volatile float* riscv_preds = (volatile float*)ralloc();
     volatile float* riscv_centroids = (volatile float*)ralloc();
     volatile float* riscv_confidence = (volatile float*)ralloc();
-    //volatile int* riscv_n_preds = (volatile int*)ralloc();
 
     for(int i=0; i<*n_preds*2; ++i){
         riscv_centroids[i] = centroids[i];
@@ -599,7 +599,6 @@ void riscv_refine_predictions(float* preds, int8_t* input_image, float* centroid
     for(int i=0; i<*n_preds; ++i){
         riscv_confidence[i] = confidence[i];
     }
-    //*riscv_n_preds = *n_preds;
 
     volatile char* riscv_args = 
         (volatile char*)(dram + RISCV_ARGS_BUFFER);
@@ -612,8 +611,6 @@ void riscv_refine_predictions(float* preds, int8_t* input_image, float* centroid
     volatile unsigned int* arg_confidence = (volatile unsigned int*)(riscv_args + 80);
     *arg_confidence = (long)riscv_confidence - (long)dram;
     volatile unsigned int* arg_n_preds = (volatile unsigned int*)(riscv_args + 88);
-    //*arg_n_preds = (long)riscv_n_preds - (long)dram;
-    //printf("pre n_preds: %d\n", *n_preds);
     *arg_n_preds = *n_preds;
     volatile float* arg_ego_translation = (volatile float*)(riscv_args + 96);
     arg_ego_translation[0] = ego_translation[0];
@@ -640,7 +637,6 @@ void riscv_refine_predictions(float* preds, int8_t* input_image, float* centroid
     run_riscv();
 
     *n_preds = *arg_n_preds;
-    //printf("n_preds: %d\n", *n_preds);
     for(int i=0; i<*n_preds*3; ++i){
         preds[i] = riscv_preds[i];
     }
@@ -648,7 +644,6 @@ void riscv_refine_predictions(float* preds, int8_t* input_image, float* centroid
     rfree((float*)riscv_preds);
     rfree((float*)riscv_centroids);
     rfree((float*)riscv_confidence);
-    //rfree((float*)riscv_n_preds);
 }
 
 void refine_predictions(float* preds, int8_t* input_image, float* centroids, float* confidence, int* n_preds, float ego_translation[3], float ego_rotation[4], float max_dist, float fuzzy_dist, float fuzzy_rate, float refine_dist, int n_cutoff, bool is_pedestrian){
@@ -994,10 +989,6 @@ void predict_scene(char* output_path, char* xmodel_path){
         fclose(ofp);
         first_frame = false;
         ++frame_idx;
-        //if(frame_idx>=3){
-            //break;
-        //}
-        //if(frame_idx>1) break;
     }
     mfree(lidar_points);
     mfree(pedestrian_preds);
@@ -1014,7 +1005,6 @@ int main(int argc, char* argv[]){
         setup_gpio_in();
         setup_gpio_out();
 
-        //if((ddr_fd = open("/dev/mem", O_RDWR)) < 0){
         if((ddr_fd = open("/dev/mem", O_RDWR | O_SYNC)) < 0){
             perror("open");
             return -1;
