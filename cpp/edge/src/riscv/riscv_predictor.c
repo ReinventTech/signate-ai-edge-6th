@@ -69,18 +69,18 @@ void preprocess(volatile float* lidar_points, volatile int* n_points, float z_of
     int n_valid_points = 0;
     float scale = (float)(1 << input_quant_scale);
     for(int i=0; i<*n_points; ++i){
-        int x = (int)(lidar_points[0]*10.0f+0.5f) + 576;
-        int y = (int)(lidar_points[1]*-10.0f+0.5f) + 576;
+        int x = (int)(lidar_points[0]*10.0f+0.5f) + 512;
+        int y = (int)(lidar_points[1]*-10.0f+0.5f) + 512;
         /*int z = (int)((lidar_points[2]+z_offset)*5.0f+0.5f);*/
         /* z_offset = 3.7 */
         int z = (int)(lidar_points[2]*5.0f+19.0f);
-        if(x>=0 && x<1152 && y>=0 && y<1152 && z>=0 && z<24){
+        if(x>=0 && x<1024 && y>=0 && y<1024 && z>=0 && z<24){
             float intensity = lidar_points[3]*scale+0.5f;
             /*intensities[0] = (intensity>127.0f? 127 : (int8_t)intensity);*/
             intensities[0] = (int8_t)intensity;
             if(intensities[0]==0) intensities[0] = 1;
 
-            offsets[0] = y*(LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH) + x*LIDAR_IMAGE_DEPTH + z;
+            offsets[0] = y*(1024*LIDAR_IMAGE_DEPTH) + x*LIDAR_IMAGE_DEPTH + z;
             ++offsets;
 
             ++n_valid_points;
@@ -176,15 +176,15 @@ void sort_predictions(volatile float* preds, int n_preds){
 
 void refine_predictions(volatile float* preds, volatile int8_t* input_image, volatile float* centroids, volatile float* confidence, volatile int* n_preds, volatile float* ego_translation, volatile float* ego_rotation, float max_dist, float fuzzy_dist, float fuzzy_rate, float refine_dist, int n_cutoff, bool is_pedestrian){
     for(int i=0; i<*n_preds; ++i){
-        int x = (int)(centroids[i*2]+0.5f) + 64;
-        int y = (int)(centroids[i*2+1]+0.5f) + 64;
+        int x = (int)(centroids[i*2]+0.5f);
+        int y = (int)(centroids[i*2+1]+0.5f);
         bool has_points = false;
         int sx = x>7? (x-7) : 0;
         int sy = y>7? (y-7) : 0;
-        int ex = x<LIDAR_IMAGE_WIDTH-7? (x+7) : (LIDAR_IMAGE_WIDTH-1);
-        int ey = y<LIDAR_IMAGE_HEIGHT-7? (y+7) : (LIDAR_IMAGE_HEIGHT-1);
+        int ex = x<1024-7? (x+7) : (1024-1);
+        int ey = y<1024-7? (y+7) : (1024-1);
         for(int ry=sy; ry<ey; ++ry){
-            int offset = ry * LIDAR_IMAGE_WIDTH;
+            int offset = ry * 1024;
             for(int rx=sx; rx<ex; ++rx){
                 if(input_image[offset+rx]>0){
                     has_points = true;
@@ -194,7 +194,7 @@ void refine_predictions(volatile float* preds, volatile int8_t* input_image, vol
             if(has_points) break;
         }
         if(has_points==0){
-            confidence[y*(LIDAR_IMAGE_WIDTH)+x] *= 0.1f;
+            confidence[y*(1024)+x] *= 0.1f;
         }
     }
 

@@ -273,10 +273,10 @@ std::pair<i8*, i8*> riscv_preprocess(float* lidar_points, int n_points, float z_
     mutex_lidar_image.lock();
     i8* lidar_image = (i8*)(base_addr + LIDAR_IMAGE_BUFFER);
     u64* tmp = (u64*)lidar_image;
-    std::memset(tmp, 0, 1152*1152*24);
+    std::memset(tmp, 0, 1024*1024*24);
     i8* max_lidar_image = (i8*)alloc();
     tmp = (u64*)max_lidar_image;
-    std::memset(tmp, 0, LIDAR_IMAGE_HEIGHT*LIDAR_IMAGE_WIDTH);
+    std::memset(tmp, 0, 1024*1024);
     for(int i=0; i<n_points; ++i){
         int offset = riscv_offsets[i];
         int max_offset = offset / LIDAR_IMAGE_DEPTH;
@@ -307,13 +307,13 @@ std::pair<i8*, i8*> preprocess(float* lidar_points, int n_points, float z_offset
     int n_valid_points = 0;
     float scale = (float)(1 << input_quant_scale);
     for(int i=0; i<n_points; ++i){
-        int x = (int)(lidar_points[offset]*10.0f+0.5f) + 576;
-        int y = (int)(-lidar_points[offset+1]*10.0f+0.5f) + 576;
+        int x = (int)(lidar_points[offset]*10.0f+0.5f) + 512;
+        int y = (int)(-lidar_points[offset+1]*10.0f+0.5f) + 512;
         int z = (int)((lidar_points[offset+2]+z_offset)*5.0f+0.5f);
         lidar_xs[i] = x;
         lidar_ys[i] = y;
         lidar_zs[i] = z;
-        if(x>=0 && x<1152 && y>=0 && y<1152 && z>=0 && z<24){
+        if(x>=0 && x<1024 && y>=0 && y<1024 && z>=0 && z<24){
             lidar_xs[n_valid_points] = x;
             lidar_ys[n_valid_points] = y;
             lidar_zs[n_valid_points] = z;
@@ -326,12 +326,12 @@ std::pair<i8*, i8*> preprocess(float* lidar_points, int n_points, float z_offset
     }
     i8* lidar_image = (i8*)(base_addr + LIDAR_IMAGE_BUFFER);
     u64* tmp = (u64*)lidar_image;
-    std::memset(tmp, 0, LIDAR_IMAGE_HEIGHT*LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_DEPTH);
+    std::memset(tmp, 0, 1024*1024*LIDAR_IMAGE_DEPTH);
     i8* max_lidar_image = (i8*)alloc();
     tmp = (u64*)max_lidar_image;
-    std::memset(tmp, 0, LIDAR_IMAGE_HEIGHT*LIDAR_IMAGE_WIDTH);
+    std::memset(tmp, 0, 1024*1024);
     for(int i=0; i<n_valid_points; ++i){
-        int max_offset = lidar_ys[i] * LIDAR_IMAGE_WIDTH + lidar_xs[i];
+        int max_offset = lidar_ys[i] * 1024 + lidar_xs[i];
         int offset = max_offset*LIDAR_IMAGE_DEPTH + lidar_zs[i];
         lidar_image[offset] = (lidar_image[offset]<intensities[i]? intensities[i] : lidar_image[offset]);
         max_lidar_image[max_offset] = (max_lidar_image[max_offset]<intensities[i]? intensities[i] : max_lidar_image[max_offset]);
@@ -381,12 +381,12 @@ void rotate_2d(float* inp, float* outp, float mx[2][2]){
 
 Bits get_pedestrian_mask(u8* pedestrian_fy){
     bool* pedestrian_m = (bool*)alloc();
-    Bits pedestrian_bits(pedestrian_m, LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT);
-    bool* buffer0 = pedestrian_m + LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT / 8;
-    Bits bits0(buffer0, LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT);
-    bool* buffer1 = buffer0 + LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT / 8;
-    Bits bits1(buffer1, LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT);
-    for(int i=0; i<LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT/64; ++i){
+    Bits pedestrian_bits(pedestrian_m, 1024*1024);
+    bool* buffer0 = pedestrian_m + 1024*1024 / 8;
+    Bits bits0(buffer0, 1024*1024);
+    bool* buffer1 = buffer0 + 1024*1024 / 8;
+    Bits bits1(buffer1, 1024*1024);
+    for(int i=0; i<1024*1024/64; ++i){
         u64 mask0 = 0, mask1 = 0;
         for(int j=0; j<64; ++j){
             mask0 |= ((u64)(pedestrian_fy[j]>124)) << j;
@@ -420,12 +420,12 @@ Bits get_pedestrian_mask(u8* pedestrian_fy){
 
 Bits get_vehicle_mask(u8* vehicle_fy){
     bool* vehicle_m = (bool*)alloc();
-    Bits vehicle_bits(vehicle_m, LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT);
-    bool* buffer0 = vehicle_m + LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT / 8;
-    Bits bits0(buffer0, LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT);
-    bool* buffer1 = buffer0 + LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT / 8;
-    Bits bits1(buffer1, LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT);
-    for(int i=0; i<LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT/64; ++i){
+    Bits vehicle_bits(vehicle_m, 1024*1024);
+    bool* buffer0 = vehicle_m + 1024*1024 / 8;
+    Bits bits0(buffer0, 1024*1024);
+    bool* buffer1 = buffer0 + 1024*1024 / 8;
+    Bits bits1(buffer1, 1024*1024);
+    for(int i=0; i<1024*1024/64; ++i){
         u64 mask0 = 0, mask1 = 0;
         for(int j=0; j<64; ++j){
             mask0 |= ((u64)(vehicle_fy[j]>123)) << j;
@@ -708,15 +708,15 @@ void refine_predictions(float* preds, i8* input_image, float* centroids, float* 
     }
 
     for(int i=0; i<*n_preds; ++i){
-        int x = (int)(centroids[i*2]+0.5) + 64;
-        int y = (int)(centroids[i*2+1]+0.5) + 64;
+        int x = (int)(centroids[i*2]+0.5);
+        int y = (int)(centroids[i*2+1]+0.5);
         bool has_points = false;
         int sx = x>7? (x-7) : 0;
         int sy = y>7? (y-7) : 0;
-        int ex = x<LIDAR_IMAGE_WIDTH-7? (x+7) : (LIDAR_IMAGE_WIDTH-1);
-        int ey = y<LIDAR_IMAGE_HEIGHT-7? (y+7) : (LIDAR_IMAGE_HEIGHT-1);
+        int ex = x<1024-7? (x+7) : (1024-1);
+        int ey = y<1024-7? (y+7) : (1024-1);
         for(int ry=sy; ry<ey; ++ry){
-            int offset = ry * LIDAR_IMAGE_WIDTH;
+            int offset = ry * 1024;
             for(int rx=sx; rx<ex; ++rx){
                 if(input_image[offset+rx]>0){
                     has_points = true;
@@ -726,7 +726,7 @@ void refine_predictions(float* preds, i8* input_image, float* centroids, float* 
             if(has_points) break;
         }
         if(!has_points){
-            confidence[y*(LIDAR_IMAGE_WIDTH)+x] *= 0.1;
+            confidence[y*(1024)+x] *= 0.1;
         }
     }
 
@@ -947,7 +947,7 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
     u8* quant_vehicle_pred = (u8*)alloc();
     for(int y=0; y<1024; ++y){
         for(int x=0; x<1024; ++x){
-            int src = (y+64)*1152*2 + (x+64)*2;
+            int src = y*1024*2 + x*2;
             int dst = y*1024 + x;
             quant_pedestrian_pred[dst] = (int)quant_pred[src] + 128;
             quant_vehicle_pred[dst] = (int)quant_pred[src+1] + 128;
