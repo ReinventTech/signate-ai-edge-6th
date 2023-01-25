@@ -89,6 +89,30 @@ void setup_gpio_out();
 void wait_rising();
 
 
+class Bits {
+public:
+    unsigned long long* data;
+    int size;
+
+    inline Bits(bool* data, int size){
+        this->data = (unsigned long long*)data;
+        this->size = size;
+    }
+
+    inline bool get(int idx){
+        int offset = idx / 64;
+        int rem = idx % 64;
+        return ((this->data[offset]>>rem) & 1) == 1;
+    }
+
+    inline void set(int idx, bool bit){
+        int offset = idx / 64;
+        int rem = idx % 64;
+        this->data[offset] |= (1ull << rem);
+    }
+};
+
+
 /**
  * gpio495の設定をする
  */
@@ -356,75 +380,85 @@ void rotate_2d(float* inp, float* outp, float mx[2][2]){
     outp[1] = mx[1][0]*inp[0] + mx[1][1]*inp[1];
 }
 
-bool* get_pedestrian_mask(unsigned char* pedestrian_fy){
-    bool* buffer0 = (bool*)alloc();
-    bool* buffer1 = buffer0 + LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT;
+Bits get_pedestrian_mask(unsigned char* pedestrian_fy){
     bool* pedestrian_m = (bool*)alloc();
-    for(int i=0; i<LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT; ++i){
-        buffer0[i] = pedestrian_m[i] = (pedestrian_fy[i]>124);
-        buffer1[i] = (pedestrian_fy[i]>110);
+    Bits pedestrian_bits(pedestrian_m, LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT);
+    bool* buffer0 = pedestrian_m + LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT / 8;
+    Bits bits0(buffer0, LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT);
+    bool* buffer1 = buffer0 + LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT / 8;
+    Bits bits1(buffer1, LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT);
+    for(int i=0; i<LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT/64; ++i){
+        unsigned long long mask0 = 0, mask1 = 0;
+        for(int j=0; j<64; ++j){
+            mask0 |= ((unsigned long long)(pedestrian_fy[j]>124)) << j;
+            mask1 |= ((unsigned long long)(pedestrian_fy[j]>110)) << j;
+        }
+        bits0.data[i] = pedestrian_bits.data[i] = mask0;
+        bits1.data[i] = mask1;
+        pedestrian_fy += 64;
     }
     for(int y=0; y<1023; ++y){
-        int offset0 = y * 1024;
-        int offset1 = offset0 + 1024;
-        for(int x=0; x<1024; ++x){
-            pedestrian_m[offset0+x] |= buffer0[offset1+x];
-            pedestrian_m[offset1+x] |= buffer0[offset0+x];
+        for(int x=0; x<1024/64; ++x){
+            pedestrian_bits.data[y*16+x] |= bits0.data[(y+1)*16+x];
+            pedestrian_bits.data[(y+1)*16+x] |= bits0.data[y*16+x];
         }
     }
     for(int y=0; y<1024; ++y){
-        int offset0 = y * 1024;
-        int offset1 = offset0 + 1;
-        for(int x=0; x<1023; ++x){
-            pedestrian_m[offset0+x] |= buffer0[offset1+x];
-            pedestrian_m[offset1+x] |= buffer0[offset0+x];
+        for(int x=0; x<1024/64-1; ++x){
+            pedestrian_bits.data[y*16+x+1] |= (pedestrian_bits.data[y*16+x+1]<<1) | (pedestrian_bits.data[y*16+x]>>63);
+            pedestrian_bits.data[y*16+x] |= (pedestrian_bits.data[y*16+x]>>1) | ((pedestrian_bits.data[y*16+x+1]&1)<<63);
         }
+        pedestrian_bits.data[y*16] |= (pedestrian_bits.data[y*16]<<1);
+        pedestrian_bits.data[y*16+1024/64-1] |= (pedestrian_bits.data[y*16+1024/64-1]>>1);
     }
     for(int y=0; y<1024; ++y){
-        int offset = y * 1024;
-        for(int x=0; x<1024; ++x){
-            pedestrian_m[offset+x] = buffer0[offset+x] || ((!pedestrian_m[offset+x]) && buffer1[offset+x]);
+        for(int x=0; x<1024/64; ++x){
+            pedestrian_bits.data[y*16+x] = (bits0.data[y*16+x] | ((~pedestrian_bits.data[y*16+x]) & bits1.data[y*16+x]));
         }
     }
-    mfree((void*)buffer0);
-    return pedestrian_m;
+    return pedestrian_bits;
 }
 
-bool* get_vehicle_mask(unsigned char* vehicle_fy){
-    bool* buffer0 = (bool*)alloc();
-    bool* buffer1 = buffer0 + LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT;
+Bits get_vehicle_mask(unsigned char* vehicle_fy){
     bool* vehicle_m = (bool*)alloc();
-    for(int i=0; i<LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT; ++i){
-        buffer0[i] = vehicle_m[i] = (vehicle_fy[i]>122);
-        buffer1[i] = (vehicle_fy[i]>119);
+    Bits vehicle_bits(vehicle_m, LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT);
+    bool* buffer0 = vehicle_m + LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT / 8;
+    Bits bits0(buffer0, LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT);
+    bool* buffer1 = buffer0 + LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT / 8;
+    Bits bits1(buffer1, LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT);
+    for(int i=0; i<LIDAR_IMAGE_WIDTH*LIDAR_IMAGE_HEIGHT/64; ++i){
+        unsigned long long mask0 = 0, mask1 = 0;
+        for(int j=0; j<64; ++j){
+            mask0 |= ((unsigned long long)(vehicle_fy[j]>122)) << j;
+            mask1 |= ((unsigned long long)(vehicle_fy[j]>119)) << j;
+        }
+        bits0.data[i] = vehicle_bits.data[i] = mask0;
+        bits1.data[i] = mask1;
+        vehicle_fy += 64;
     }
     for(int y=0; y<1021; ++y){
-        int offset0 = y * 1024;
-        int offset1 = offset0 + 3072;
-        for(int x=0; x<1024; ++x){
-            vehicle_m[offset0+x] |= buffer0[offset1+x];
-            vehicle_m[offset1+x] |= buffer0[offset0+x];
+        for(int x=0; x<1024/64; ++x){
+            vehicle_bits.data[y*16+x] |= bits0.data[(y+3)*16+x];
+            vehicle_bits.data[(y+3)*16+x] |= bits0.data[y*16+x];
         }
     }
     for(int y=0; y<1024; ++y){
-        int offset0 = y * 1024;
-        int offset1 = offset0 + 3;
-        for(int x=0; x<1021; ++x){
-            vehicle_m[offset0+x] |= buffer0[offset1+x];
-            vehicle_m[offset1+x] |= buffer0[offset0+x];
+        for(int x=0; x<1024/64-3; ++x){
+            vehicle_bits.data[y*16+x+1] |= (vehicle_bits.data[y*16+x+1]<<3) | (vehicle_bits.data[y*16+x]>>60);
+            vehicle_bits.data[y*16+x] |= (vehicle_bits.data[y*16+x]>>3) | ((vehicle_bits.data[y*16+x+1]&7)<<61);
         }
+        vehicle_bits.data[y*16] |= (vehicle_bits.data[y*16]<<3);
+        vehicle_bits.data[y*16+1024/64-1] |= (vehicle_bits.data[y*16+1024/64-1]>>3);
     }
     for(int y=0; y<1024; ++y){
-        int offset = y * 1024;
-        for(int x=0; x<1024; ++x){
-            vehicle_m[offset+x] = buffer0[offset+x] || ((!vehicle_m[offset+x]) && buffer1[offset+x]);
+        for(int x=0; x<1024/64; ++x){
+            vehicle_bits.data[y*16+x] = (bits0.data[y*16+x] | ((~vehicle_bits.data[y*16+x]) & bits1.data[y*16+x]));
         }
     }
-    mfree((void*)buffer0);
-    return vehicle_m;
+    return vehicle_bits;
 }
 
-void cca(unsigned char* p, bool* m, int* n_centroids, float* scores, int* areas, float* centroids){
+void cca(unsigned char* p, Bits m, int* n_centroids, float* scores, int* areas, float* centroids){
     bool* checked = (bool*)alloc();
     unsigned long long* dst = (unsigned long long*)checked;
     std::memset(dst, 0, 1024*1024);
@@ -435,7 +469,7 @@ void cca(unsigned char* p, bool* m, int* n_centroids, float* scores, int* areas,
         for(int x=0; x<1024; ++x){
             int offset = offset_y + x;
             if(checked[offset]) continue;
-            if(m[offset]==0){
+            if(!m.get(offset)){
                 checked[offset] = true;
                 continue;
             }
@@ -453,7 +487,7 @@ void cca(unsigned char* p, bool* m, int* n_centroids, float* scores, int* areas,
                 int tx = head_coords[0];
                 int ty = head_coords[1];
                 int d = ty*1024 + tx - 1;
-                if(m[d]==1 && !checked[d] && tx>0){
+                if(m.get(d) && !checked[d] && tx>0){
                     tail_coords[0] = tx - 1;
                     tail_coords[1] = ty;
                     ++area;
@@ -464,7 +498,7 @@ void cca(unsigned char* p, bool* m, int* n_centroids, float* scores, int* areas,
                     tail_coords += 2;
                 }
                 d += 2;
-                if(m[d]==1 && !checked[d] && tx<1023){
+                if(m.get(d) && !checked[d] && tx<1023){
                     tail_coords[0] = tx + 1;
                     tail_coords[1] = ty;
                     ++area;
@@ -475,7 +509,7 @@ void cca(unsigned char* p, bool* m, int* n_centroids, float* scores, int* areas,
                     tail_coords += 2;
                 }
                 d -= 1025;
-                if(m[d]==1 && !checked[d] && ty>0){
+                if(m.get(d) && !checked[d] && ty>0){
                     tail_coords[0] = tx;
                     tail_coords[1] = ty - 1;
                     ++area;
@@ -486,7 +520,7 @@ void cca(unsigned char* p, bool* m, int* n_centroids, float* scores, int* areas,
                     tail_coords += 2;
                 }
                 d += 2048;
-                if(m[d]==1 && !checked[d] && ty<1023){
+                if(m.get(d) && !checked[d] && ty<1023){
                     tail_coords[0] = tx;
                     tail_coords[1] = ty + 1;
                     ++area;
@@ -513,12 +547,14 @@ void cca(unsigned char* p, bool* m, int* n_centroids, float* scores, int* areas,
 }
 
 void postprocess(unsigned char* quant_pedestrian_pred, unsigned char* quant_vehicle_pred, float* pedestrian_centroid, float* pedestrian_confidence, int* n_pedestrians, float* vehicle_centroid, float* vehicle_confidence, int* n_vehicles, int frame_idx, unsigned char* pred_records, float* ego_records){
-    std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
-    bool* pedestrian_m = get_pedestrian_mask(quant_pedestrian_pred);
-    bool* vehicle_m = get_vehicle_mask(quant_vehicle_pred);
-    std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
-    double d0 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0);
-    //printf("mask time[ms]: %lf\n", d0);
+    //std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
+    Bits pedestrian_m = get_pedestrian_mask(quant_pedestrian_pred);
+    //std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
+    Bits vehicle_m = get_vehicle_mask(quant_vehicle_pred);
+    //std::chrono::system_clock::time_point t2 = std::chrono::system_clock::now();
+    //double d0 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0);
+    //double d1 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count() / 1000.0);
+    //printf("mask time[ms]: %lf %lf\n", d0, d1);
 
     int* pedestrian_areas = (int*)alloc();
     cca(quant_pedestrian_pred, pedestrian_m, n_pedestrians, pedestrian_confidence, pedestrian_areas, pedestrian_centroid);
@@ -537,9 +573,10 @@ void postprocess(unsigned char* quant_pedestrian_pred, unsigned char* quant_vehi
 
     int* vehicle_areas = (int*)alloc();
     cca(quant_vehicle_pred, vehicle_m, n_vehicles, vehicle_confidence, vehicle_areas, vehicle_centroid);
+    //printf("cca end\n");
 
-    mfree((void*)pedestrian_m);
-    mfree((void*)vehicle_m);
+    mfree((void*)pedestrian_m.data);
+    mfree((void*)vehicle_m.data);
     mfree((void*)pedestrian_areas);
     mfree((void*)vehicle_areas);
 }
