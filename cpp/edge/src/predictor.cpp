@@ -827,13 +827,13 @@ void merge_prev_preds(u8* pred, float ego_translation[3], float ego_rotation[4],
     float* txyz1 = ego_records + (frame_idx%2) * 8;
     float* qt1 = ego_records + (frame_idx%2) * 8 + 3;
 
-    float dtx0 = ego_translation[0] - txyz0[0];
-    float dty0 = ego_translation[1] - txyz0[1];
-    float dtz0 = ego_translation[2] - txyz0[2];
+    float dtx0 = (ego_translation[0] - txyz0[0]) * 10.0f;
+    float dty0 = (ego_translation[1] - txyz0[1]) * 10.0f;
+    float dtz0 = (ego_translation[2] - txyz0[2]) * 10.0f;
 
-    float dtx1 = ego_translation[0] - txyz1[0];
-    float dty1 = ego_translation[1] - txyz1[1];
-    float dtz1 = ego_translation[2] - txyz1[2];
+    float dtx1 = (ego_translation[0] - txyz1[0]) * 10.0f;
+    float dty1 = (ego_translation[1] - txyz1[1]) * 10.0f;
+    float dtz1 = (ego_translation[2] - txyz1[2]) * 10.0f;
 
     float iqt[4] = {};
     inverse_quaternion(ego_rotation, iqt);
@@ -852,23 +852,31 @@ void merge_prev_preds(u8* pred, float ego_translation[3], float ego_rotation[4],
 
     float sxyz0[2], sxyz1[2];
     for(int y=0; y<1024; ++y){
-        float dxyz[3] = {0.0f, (float)(y - 512), 0.0f};
+        float dxyz[3] = {-512.0f, (float)(y - 512), 0.0f};
+        rotate_2d(dxyz, sxyz0, mx0);
+        rotate_2d(dxyz, sxyz1, mx1);
+        sxyz0[0] += dtx0;
+        sxyz0[1] -= dty0;
+        sxyz1[0] += dtx1;
+        sxyz1[1] -= dty1;
         for(int x=0; x<1024; ++x){
-            dxyz[0] = (float)(x - 512);
-            rotate_2d(dxyz, sxyz0, mx0);
-            int sx0 = (int)(sxyz0[0] + dtx0*10.0f) + 512;
-            int sy0 = (int)(sxyz0[1] - dty0*10.0f) + 512;
+            int sx0 = (int)sxyz0[0] + 512;
+            int sy0 = (int)sxyz0[1] + 512;
             u8 v1 = (sx0>=0 && sx0<1024 && sy0>=0 && sy0<1024)? pred0[sy0*1024 + sx0] : 0;
 
-            rotate_2d(dxyz, sxyz1, mx1);
-            int sx1 = (int)(sxyz1[0] + dtx1*10.0f) + 512;
-            int sy1 = (int)(sxyz1[1] - dty1*10.0f) + 512;
+            int sx1 = (int)sxyz1[0] + 512;
+            int sy1 = (int)sxyz1[1] + 512;
             u8 v2 = (sx1>=0 && sx1<1024 && sy1>=0 && sy1<1024)? pred1[sy1*1024 + sx1] : 0;
 
-            u8 v0 = pred[y*1024 + x];
+            u8 v0 = pred[0];
             u8 a = v0>v2? v0 : v2;
             u8 b = a>v1? v1 : a;
-            pred[y*1024 + x] = (b<v0? v0 : b);
+            pred[0] = (b<v0? v0 : b);
+            ++pred;
+            sxyz0[0] += mx0[0][0];
+            sxyz0[1] += mx0[1][0];
+            sxyz1[0] += mx1[0][0];
+            sxyz1[1] += mx1[1][0];
         }
     }
 }
