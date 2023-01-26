@@ -266,7 +266,7 @@ std::pair<i8*, i8*> riscv_preprocess(float* lidar_points, int n_points, float z_
     run_riscv();
     std::chrono::system_clock::time_point t3 = std::chrono::system_clock::now();
     double d1 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count() / 1000.0);
-    //printf("riscv time[ms]: %lf\n", d1);
+    printf("riscv time[ms]: %lf\n", d1);
 
     n_points = *arg_n_points;
     mutex_lidar_image.lock();
