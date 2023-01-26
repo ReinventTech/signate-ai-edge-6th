@@ -266,7 +266,7 @@ std::pair<i8*, i8*> riscv_preprocess(float* lidar_points, int n_points, float z_
     run_riscv();
     std::chrono::system_clock::time_point t3 = std::chrono::system_clock::now();
     double d1 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count() / 1000.0);
-    printf("riscv time[ms]: %lf\n", d1);
+    //printf("riscv time[ms]: %lf\n", d1);
 
     n_points = *arg_n_points;
     mutex_lidar_image.lock();
@@ -367,13 +367,13 @@ void quaternion_to_matrix(float qt[4], float matrix[3][3]){
     matrix[2][2] = 1.0f - s * (qt1_2 + qt2_2);
 }
 
-void rotate(float inp[3], float outp[3], float mx[3][3]){
+inline void rotate(float inp[3], float outp[3], float mx[3][3]){
     outp[0] = mx[0][0]*inp[0] + mx[0][1]*inp[1] + mx[0][2]*inp[2];
     outp[1] = mx[1][0]*inp[0] + mx[1][1]*inp[1] + mx[1][2]*inp[2];
     //outp[2] = mx[2][0]*inp[0] + mx[2][1]*inp[1] + mx[2][2]*inp[2];
 }
 
-void rotate_2d(float* inp, float* outp, float mx[2][2]){
+inline void rotate_2d(float* inp, float* outp, float mx[2][2]){
     outp[0] = mx[0][0]*inp[0] + mx[0][1]*inp[1];
     outp[1] = mx[1][0]*inp[0] + mx[1][1]*inp[1];
 }
@@ -850,20 +850,19 @@ void merge_prev_preds(u8* pred, float ego_translation[3], float ego_rotation[4],
     float mx0[2][2] = {{_mx0[0][0], _mx0[0][1]}, {_mx0[1][0], _mx0[1][1]}};
     float mx1[2][2] = {{_mx1[0][0], _mx1[0][1]}, {_mx1[1][0], _mx1[1][1]}};
 
+    float sxyz0[2], sxyz1[2];
     for(int y=0; y<1024; ++y){
         float dxyz[3] = {0.0f, (float)(y - 512), 0.0f};
         for(int x=0; x<1024; ++x){
             dxyz[0] = (float)(x - 512);
-            float sxyz0[2];
             rotate_2d(dxyz, sxyz0, mx0);
-            int sx0 = (int)(sxyz0[0] + dtx0*10.0f + 0.5f) + 512;
-            int sy0 = (int)(sxyz0[1] - dty0*10.0f + 0.5f) + 512;
+            int sx0 = (int)(sxyz0[0] + dtx0*10.0f) + 512;
+            int sy0 = (int)(sxyz0[1] - dty0*10.0f) + 512;
             u8 v1 = (sx0>=0 && sx0<1024 && sy0>=0 && sy0<1024)? pred0[sy0*1024 + sx0] : 0;
 
-            float sxyz1[2];
             rotate_2d(dxyz, sxyz1, mx1);
-            int sx1 = (int)(sxyz1[0] + dtx1*10.0f + 0.5f) + 512;
-            int sy1 = (int)(sxyz1[1] - dty1*10.0f + 0.5f) + 512;
+            int sx1 = (int)(sxyz1[0] + dtx1*10.0f) + 512;
+            int sy1 = (int)(sxyz1[1] - dty1*10.0f) + 512;
             u8 v2 = (sx1>=0 && sx1<1024 && sy1>=0 && sy1<1024)? pred1[sy1*1024 + sx1] : 0;
 
             u8 v0 = pred[y*1024 + x];
