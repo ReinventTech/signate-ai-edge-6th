@@ -117,7 +117,7 @@ void rotate(float inp[3], float outp[3], float mx[3][3]){
 
 void sort_predictions(volatile float* preds, int n_preds){
     if(n_preds==0) return;
-    float* sorted_preds = (float*)alloc();
+    float* sorted_preds = (float*)preds + 1024*16;
     sorted_preds[0] = preds[0];
     sorted_preds[1] = preds[1];
     sorted_preds[2] = preds[2];
@@ -127,12 +127,16 @@ void sort_predictions(volatile float* preds, int n_preds){
         for(int j=i-1; j>=0; --j){
             if(sorted_preds[j*5]<preds[i*5]){
                 if(j==0){
+                    float* src = sorted_preds + (i-1)*5;
+                    float* dst = src + 5;
                     for(int k=i; k>0; --k){
-                        sorted_preds[k*5] = sorted_preds[(k-1)*5];
-                        sorted_preds[k*5+1] = sorted_preds[(k-1)*5+1];
-                        sorted_preds[k*5+2] = sorted_preds[(k-1)*5+2];
-                        sorted_preds[k*5+3] = sorted_preds[(k-1)*5+3];
-                        sorted_preds[k*5+4] = sorted_preds[(k-1)*5+4];
+                        dst[0] = src[0];
+                        dst[1] = src[1];
+                        dst[2] = src[2];
+                        dst[3] = src[3];
+                        dst[4] = src[4];
+                        src -= 5;
+                        dst -= 5;
                     }
                     sorted_preds[0] = preds[i*5];
                     sorted_preds[1] = preds[i*5+1];
@@ -143,12 +147,16 @@ void sort_predictions(volatile float* preds, int n_preds){
                 }
             }
             else{
+                float* src = sorted_preds + (i-1)*5;
+                float* dst = src + 5;
                 for(int k=i; k>j+1; --k){
-                    sorted_preds[k*5] = sorted_preds[(k-1)*5];
-                    sorted_preds[k*5+1] = sorted_preds[(k-1)*5+1];
-                    sorted_preds[k*5+2] = sorted_preds[(k-1)*5+2];
-                    sorted_preds[k*5+3] = sorted_preds[(k-1)*5+3];
-                    sorted_preds[k*5+4] = sorted_preds[(k-1)*5+4];
+                    dst[0] = src[0];
+                    dst[1] = src[1];
+                    dst[2] = src[2];
+                    dst[3] = src[3];
+                    dst[4] = src[4];
+                    src -= 5;
+                    dst -= 5;
                 }
                 sorted_preds[(j+1)*5] = preds[i*5];
                 sorted_preds[(j+1)*5+1] = preds[i*5+1];
@@ -166,13 +174,12 @@ void sort_predictions(volatile float* preds, int n_preds){
         preds[i*5+3] = sorted_preds[i*5+3];
         preds[i*5+4] = sorted_preds[i*5+4];
     }
-    mfree((void*)sorted_preds);
 }
 
 void refine_predictions(volatile float* preds, volatile int8_t* input_image, volatile float* centroids, volatile float* confidence, volatile int* n_preds, volatile float* ego_translation, volatile float* ego_rotation, float max_dist, float fuzzy_dist, float fuzzy_rate, float refine_dist, int n_cutoff, bool is_pedestrian){
     for(int i=0; i<*n_preds; ++i){
-        int x = (int)(centroids[i*2]+0.5f);
-        int y = (int)(centroids[i*2+1]+0.5f);
+        int x = (int)centroids[i*2];
+        int y = (int)centroids[i*2+1];
         bool has_points = false;
         int sx = x>7? (x-7) : 0;
         int sy = y>7? (y-7) : 0;
@@ -189,7 +196,7 @@ void refine_predictions(volatile float* preds, volatile int8_t* input_image, vol
             if(has_points) break;
         }
         if(has_points==0){
-            confidence[y*(1024)+x] *= 0.1f;
+            confidence[y*1024+x] *= 0.1f;
         }
     }
 
@@ -205,7 +212,7 @@ void refine_predictions(volatile float* preds, volatile int8_t* input_image, vol
         centroids[i*2+1] = rxyz[1];
     }
 
-    volatile float* refined_preds = (volatile float*)alloc();
+    volatile float* refined_preds = confidence + 1024*8;
     int n_refined_preds = 0;
     for(int i=0; i<*n_preds; ++i){
         float dx = centroids[i*2] - ego_translation[0];
@@ -261,7 +268,6 @@ void refine_predictions(volatile float* preds, volatile int8_t* input_image, vol
         }
     }
     *n_preds = (n_refined_preds>50? 50 : n_refined_preds); // MOVE
-    mfree((void*)refined_preds);
 }
 
 int main(void)
