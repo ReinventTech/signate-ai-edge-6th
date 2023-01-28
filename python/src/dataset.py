@@ -100,7 +100,7 @@ def init_sample_annotation(root):
             )
 
 
-def create_dataset(root=".", split=True):
+def create_dataset(root=".", train=True, split=True):
     init_sample_data(root)
     init_scenes(root)
     init_ego_pose(root)
@@ -108,7 +108,7 @@ def create_dataset(root=".", split=True):
     init_sample_annotation(root)
     dataset = []
     for token, scene in token_to_scene.items():
-        if split:
+        if train:
             if scene["name"] in [
                 "scene-0109",
             ]:
@@ -128,8 +128,6 @@ def create_dataset(root=".", split=True):
                 camera_sample["calibrated_sensor_token"]
             ]
 
-            camera_txyz = np.array(calib_camera["translation"])
-            camera_qt = quaternion.as_quat_array(calib_camera["rotation"])
             [fx, _, cx], [_, fy, cy], [_, _, _] = calib_camera["camera_intrinsic"]
 
             image_path = camera_sample["filename"]
@@ -142,7 +140,6 @@ def create_dataset(root=".", split=True):
             lidar = np.fromfile(
                 os.path.join(root, lidar_path), dtype=np.float32
             ).reshape((-1, 5))
-            lidar_proj_xyz = lidar[:, :3]
             lidar_xyz = lidar[:, :3]
             lidar_txyz = np.array(calib_lidar["translation"])
             lidar_qt = quaternion.as_quat_array(calib_lidar["rotation"])
@@ -164,7 +161,13 @@ def create_dataset(root=".", split=True):
             scene_dataset.append(data)
         dataset.append(scene_dataset)
 
-    relative_dir = "signate/train" if split else "signate/test"
+    relative_dir = (
+        ("signate/train" if split else "signate/calib2")
+        if train
+        else "signate/test"
+        if split
+        else "signate/calib"
+    )
     dataset_dir = os.path.join(root, relative_dir)
     if not os.path.exists(dataset_dir):
         os.makedirs(dataset_dir)
@@ -208,11 +211,11 @@ def create_dataset(root=".", split=True):
                         (bb_xyz, bb_sxyz, bb_rxyz, np.array([category]))
                     )
                     bbs.append(bb)
-                lidar_image = np.zeros((1152, 1152, 40))
+                lidar_image = np.zeros((1152, 1152, 30))
 
                 lidar_points[:, 0] = np.round((lidar_points[:, 0] + 57.6) * 10)
                 lidar_points[:, 1] = np.round((-lidar_points[:, 1] + 57.6) * 10)
-                lidar_points[:, 2] = np.round((lidar_points[:, 2] + 2.5) * 10)
+                lidar_points[:, 2] = np.round((lidar_points[:, 2] + 4.0) * 5)
                 indices = np.logical_and.reduce(
                     (
                         lidar_points[:, 0] >= 0,
@@ -220,7 +223,7 @@ def create_dataset(root=".", split=True):
                         lidar_points[:, 1] >= 0,
                         lidar_points[:, 1] < 1152,
                         lidar_points[:, 2] >= 0,
-                        lidar_points[:, 2] < 40,
+                        lidar_points[:, 2] < 30,
                     )
                 )
                 lidar_points = lidar_points[indices]
@@ -232,27 +235,10 @@ def create_dataset(root=".", split=True):
                 )
                 np.maximum.at(lidar_image, (lidar_ys, lidar_xs, lidar_zs), intensities)
 
-                orientation_image = np.zeros((1152, 1152, 1), np.float32)
                 xs = np.arange(1152)[np.newaxis, :]
                 ys = np.arange(1152)[:, np.newaxis]
                 xs = np.tile(xs, (1152, 1))
                 ys = np.tile(ys, (1, 1152))
-                xys = np.stack([xs, ys], -1)
-                ds = np.linalg.norm(
-                    xys - np.array([576, 576])[np.newaxis, np.newaxis, :],
-                    ord=2,
-                    axis=-1,
-                ) / (
-                    1000
-                )  #  ~ 1.0
-                # dxs = xys[:, :, 0] - 576
-                # dys = xys[:, :, 1] - 576
-                # angles = np.arctan2(dys, dxs)
-                # cosines = np.reshape(np.cos(angles), (1120, 1120))
-                # sines = np.reshape(np.sin(angles), (1120, 1120))
-                orientation_image[:, :, 0] = ds
-                # orientation_image[:, :, 1] = cosines
-                # orientation_image[:, :, 2] = sines
 
                 lidar_demo = np.tile(
                     np.clip(lidar_image.max(-1, keepdims=True) * 255, 0, 255).astype(
@@ -270,75 +256,17 @@ def create_dataset(root=".", split=True):
                         color=(0, 255, 0) if bb[-1] == 0 else (0, 0, 255),
                         thickness=1,
                     )
-                lidar_image = (lidar_image * 65535).astype(np.uint16)
+                lidar_image = (lidar_image * 255).astype(np.uint8)
                 bbs = np.array(bbs)
 
-                camera_image = cv2.imread(os.path.join(root, data["image_path"]))
                 calib_camera = data["calib_camera"]
-                camera_txyz = np.array(calib_camera["translation"])
-                camera_qt = quaternion.as_quat_array(calib_camera["rotation"])
                 [fx, _, cx], [_, fy, cy], [_, _, _] = calib_camera["camera_intrinsic"]
 
                 lidar = np.fromfile(
                     os.path.join(root, data["lidar_path"]), dtype=np.float32
                 ).reshape((-1, 5))
-                lidar_proj_image = np.zeros(
-                    (4, camera_image.shape[0], camera_image.shape[1], 4)
-                )
-                # depth, intensity
-                intensity = lidar[:, 3]
-                lidar_proj_xyz = lidar[:, :3]
-                lidar_proj_xyz = lidar_proj_xyz - camera_txyz
-                lidar_proj_xyz = quaternion.rotate_vectors(
-                    camera_qt.inverse(), lidar_proj_xyz
-                )
-                qt = quaternion.as_quat_array([1, 0, 1, 0])
-                for a in range(4):
-                    u = np.round(
-                        cx + lidar_proj_xyz[:, 0] * fx / lidar_proj_xyz[:, 2]
-                    ).astype(int)
-                    v = np.round(
-                        cy + lidar_proj_xyz[:, 1] * fy / lidar_proj_xyz[:, 2]
-                    ).astype(int)
-                    indices = np.logical_and.reduce(
-                        (
-                            u >= 0,
-                            u < camera_image.shape[1],
-                            v >= 0,
-                            v < camera_image.shape[0],
-                        )
-                    )
-                    i = np.round(intensity[indices] * 65535).astype(np.uint16)
-                    i_msb = (i // 256).astype(np.uint8)
-                    i_lsb = (i % 256).astype(np.uint8)
-                    d = np.minimum(
-                        np.round(
-                            np.linalg.norm(lidar_proj_xyz, ord=2, axis=-1)[indices]
-                            * 256
-                        ),
-                        65535,
-                    ).astype(np.uint16)
-                    d_msb = (d // 256).astype(np.uint8)
-                    d_lsb = (d % 256).astype(np.uint8)
-                    u = u[indices]
-                    v = v[indices]
-                    lidar_proj_image[a][v, u] = np.stack(
-                        [d_msb, d_lsb, i_msb, i_lsb], -1
-                    )
-                    lidar_proj_xyz = quaternion.rotate_vectors(qt, lidar_proj_xyz)
-                lidar_proj_image_paths = [None, None, None, None]
-                for a in range(4):
-                    lidar_proj_image_paths[a] = f"{relative_dir}/{tag}_proj_{a}.png"
-                    cv2.imwrite(
-                        os.path.join(root, lidar_proj_image_paths[a]),
-                        lidar_proj_image[a],
-                    )
-                lidar_proj_image_paths_bytes = [
-                    bytes(p, "utf-8") for p in lidar_proj_image_paths
-                ]
-                camera_image_path_bytes = bytes(data["image_path"], "utf-8")
 
-                if split or True:
+                if split:
                     for dy in [0, 320, 640]:
                         for dx in [0, 320, 640]:
                             split_tag = f"{tag}_{dy}_{dx}"
@@ -365,42 +293,6 @@ def create_dataset(root=".", split=True):
                             ):
                                 continue
 
-                            split_orientation_image = orientation_image[
-                                dy : dy + 512, dx : dx + 512
-                            ].copy()
-                            split_orientation_image[:, :, 0] = np.minimum(
-                                np.round(split_orientation_image[:, :, 0] * 65535),
-                                65535,
-                            )
-                            split_orientation_image = split_orientation_image.astype(
-                                np.uint16
-                            )
-                            split_orientation_image_msb = (
-                                split_orientation_image // 256
-                            ).astype(np.uint8)
-                            split_orientation_image_lsb = (
-                                split_orientation_image % 256
-                            ).astype(np.uint8)
-                            split_orientation_image_msb_path = (
-                                f"{relative_dir}/{split_tag}_orientation_msb.png"
-                            )
-                            split_orientation_image_lsb_path = (
-                                f"{relative_dir}/{split_tag}_orientation_lsb.png"
-                            )
-                            cv2.imwrite(
-                                os.path.join(root, split_orientation_image_msb_path),
-                                split_orientation_image_msb,
-                            )
-                            cv2.imwrite(
-                                os.path.join(root, split_orientation_image_lsb_path),
-                                split_orientation_image_lsb,
-                            )
-                            orientation_msb_bytes = bytes(
-                                split_orientation_image_msb_path, "utf-8"
-                            )
-                            orientation_lsb_bytes = bytes(
-                                split_orientation_image_lsb_path, "utf-8"
-                            )
                             lidar_bytes = split_lidar_image.tobytes()
                             lidar_gzip = gzip.compress(lidar_bytes)
                             lidar_gzip_path = (
@@ -423,72 +315,34 @@ def create_dataset(root=".", split=True):
                                                 value=[bbs_bytes]
                                             )
                                         ),
-                                        "orientation_msb_path": tf.train.Feature(
-                                            bytes_list=tf.train.BytesList(
-                                                value=[orientation_msb_bytes]
-                                            )
-                                        ),
-                                        "orientation_lsb_path": tf.train.Feature(
-                                            bytes_list=tf.train.BytesList(
-                                                value=[orientation_lsb_bytes]
-                                            )
-                                        ),
-                                        "lidar_proj_image_0_path": tf.train.Feature(
-                                            bytes_list=tf.train.BytesList(
-                                                value=[lidar_proj_image_paths_bytes[0]]
-                                            )
-                                        ),
-                                        "lidar_proj_image_90_path": tf.train.Feature(
-                                            bytes_list=tf.train.BytesList(
-                                                value=[lidar_proj_image_paths_bytes[1]]
-                                            )
-                                        ),
-                                        "lidar_proj_image_180_path": tf.train.Feature(
-                                            bytes_list=tf.train.BytesList(
-                                                value=[lidar_proj_image_paths_bytes[2]]
-                                            )
-                                        ),
-                                        "lidar_proj_image_270_path": tf.train.Feature(
-                                            bytes_list=tf.train.BytesList(
-                                                value=[lidar_proj_image_paths_bytes[3]]
-                                            )
-                                        ),
-                                        "camera_image_path": tf.train.Feature(
-                                            bytes_list=tf.train.BytesList(
-                                                value=[camera_image_path_bytes]
-                                            )
-                                        ),
                                     }
                                 )
                             ).SerializeToString()
                             writer.write(record)
                 else:
-                    orientation_bytes = orientation_image.tobytes()
-                    lidar_bytes = lidar_image.tobytes()
-                    bbs_bytes = bbs.tobytes()
+                    split_tag = tag
+                    split_lidar_image = lidar_image
+                    split_bbs = bbs
+                    if split_bbs.shape[0] == 0 or np.all(split_lidar_image == 0):
+                        continue
+
+                    lidar_bytes = split_lidar_image.tobytes()
+                    lidar_gzip = gzip.compress(lidar_bytes)
+                    lidar_gzip_path = f"{relative_dir}/{split_tag}_lidar_image.gzip"
+                    with open(os.path.join(root, lidar_gzip_path), "wb") as f:
+                        f.write(lidar_gzip)
+                    bbs_bytes = split_bbs.tobytes()
+                    lidar_gzip_path = bytes(lidar_gzip_path, "utf-8")
                     record = tf.train.Example(
                         features=tf.train.Features(
                             feature={
-                                "lidar": tf.train.Feature(
-                                    bytes_list=tf.train.BytesList(value=[lidar_bytes])
+                                "lidar_gzip_path": tf.train.Feature(
+                                    bytes_list=tf.train.BytesList(
+                                        value=[lidar_gzip_path]
+                                    )
                                 ),
                                 "bbs": tf.train.Feature(
                                     bytes_list=tf.train.BytesList(value=[bbs_bytes])
-                                ),
-                                "orientations": tf.train.Feature(
-                                    bytes_list=tf.train.BytesList(
-                                        value=[orientation_bytes]
-                                    )
-                                ),
-                                "lidar_proj_image_paths": tf.train.Feature(
-                                    bytes_list=tf.train.BytesList(
-                                        value=[lidar_proj_image_paths_bytes]
-                                    )
-                                ),
-                                "camera_image_path": tf.train.Feature(
-                                    bytes_list=tf.train.BytesList(
-                                        value=[camera_image_path_bytes]
-                                    )
                                 ),
                             }
                         )
@@ -497,12 +351,18 @@ def create_dataset(root=".", split=True):
             print(f"scene #{scene_idx} completed")
 
 
-def get_dataset(root=".", split=True):
+def get_dataset(root=".", train=True, split=True):
     dataset_path = os.path.join(
         root,
-        "signate/train/signate.tfrecords"
+        (
+            "signate/train/signate.tfrecords"
+            if split
+            else "signate/calib2/signate.tfrecords"
+        )
+        if train
+        else "signate/test/signate.tfrecords"
         if split
-        else "signate/test/signate.tfrecords",
+        else "signate/calib/signate.tfrecords",
     )
     return tf.data.TFRecordDataset(dataset_path, compression_type="GZIP")
 
@@ -515,7 +375,12 @@ if __name__ == "__main__":
     )
     parser_create.add_argument("--root", type=str)
     parser_create.set_defaults(
-        func=lambda args: [create_dataset(args.root), create_dataset(args.root, False)]
+        func=lambda args: [
+            create_dataset(args.root, True),
+            create_dataset(args.root, False),
+            create_dataset(args.root, False, False),
+            create_dataset(args.root, True, False),
+        ]
     )
     args = parser.parse_args()
     args.func(args)

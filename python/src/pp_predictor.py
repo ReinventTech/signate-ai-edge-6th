@@ -2,14 +2,11 @@ import os
 import quaternion
 import numpy as np
 import cv2
-import logging
 import json
 
 os.environ["TF_GPU_THREAD_MODE"] = "gpu_private"
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices"
 import tensorflow as tf
-
-logging.getLogger("tensorflow").setLevel(logging.ERROR)
 
 
 def get_cam_lidar_ego_camcalib_lidarcalib_ann(cam_path, lidar_path):
