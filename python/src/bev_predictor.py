@@ -2,17 +2,12 @@ import os
 import quaternion
 import numpy as np
 import cv2
-import logging
-
 from time import time
 
 os.environ["TF_GPU_THREAD_MODE"] = "gpu_private"
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices"
 import tensorflow as tf
 import tensorflow_addons as tfa
-
-
-logging.getLogger("tensorflow").setLevel(logging.ERROR)
 
 
 @tf.function(
@@ -273,9 +268,7 @@ def refine(
 
 
 def postprocess(pred, ego_pose, ego_pose_records, pred_records):
-    # t0 = time()
     y = pred[0, 64:-64, 64:-64, :]  # .copy()
-    # t1 = time()
 
     if len(ego_pose_records) >= 2:
         txyz0 = -np.array(ego_pose_records[-1]["translation"]) + np.array(
@@ -336,7 +329,6 @@ def postprocess(pred, ego_pose, ego_pose_records, pred_records):
                 (1024, 1024),
             )
             y = merge3(y, y0, y1)  # .numpy()
-    # t2 = time()
 
     pedestrian_fy = y[..., 0]
     vehicle_fy = y[..., 1]
@@ -352,7 +344,6 @@ def postprocess(pred, ego_pose, ego_pose_records, pred_records):
         ltype=cv2.CV_32S,
         ccltype=cv2.CCL_GRANA,
     )
-    # t4 = time()
     (
         n_vehicle,
         vehicle_ccs,
@@ -364,7 +355,6 @@ def postprocess(pred, ego_pose, ego_pose_records, pred_records):
         ltype=cv2.CV_32S,
         ccltype=cv2.CCL_GRANA,
     )
-    # t5 = time()
 
     pedestrian_centroid = pedestrian_centroid[:, [1, 0]]
     vehicle_centroid = vehicle_centroid[:, [1, 0]]
@@ -420,9 +410,6 @@ def postprocess(pred, ego_pose, ego_pose_records, pred_records):
         ).numpy()
         vehicle_centroid = vehicle_centroid[1:]
         vehicle_confidence = vehicle_confidence[1:]
-    # t6 = time()
-    # print("pp", t1 - t0, t2 - t1, t3 - t2, t4 - t3, t5 - t4, t6 - t5)
-    # print(pedestrian_centroid1.shape[0], vehicle_centroid1.shape[0])
 
     return (
         pedestrian_centroid,
@@ -451,13 +438,7 @@ def preprocess3(lidar_points, z_offset1, z_offset2, z_offset3):
 def predict_tf(
     bev_model, lidar_points, ego_pose, ego_pose_records, pred_records, summary=False
 ):
-    t0 = time()
-    # input_image = preprocess(lidar_points, 3.6)
-    # input_image1 = preprocess(lidar_points, 4.4)
-    # input_image2 = preprocess(lidar_points, 3.7)
-    # input_image3 = preprocess(lidar_points, 3.0)
     input_image1, input_image2, input_image3 = preprocess3(lidar_points, 4.4, 3.7, 3.0)
-    t1 = time()
     if summary:
         input_summary_image1 = np.max(input_image1.numpy()[..., :-1], -1)[0][
             :, :, np.newaxis
@@ -470,29 +451,19 @@ def predict_tf(
     preds = bev_model(
         tf.concat(
             [
-                # input_image,
                 input_image1[:, :, ::-1, :],
-                # # input_image[:, :, ::-1, :],
                 input_image2[:, ::-1, :, :],
                 input_image3[:, :, :, :],  #
-                # tf.transpose(input_image, (0, 2, 1, 3)),
             ],
             0,
         ),
     )["detector"]
-    t2 = time()
     pred = (
-        # preds[:1]
-        preds[0:1, :, ::-1, :]
-        # # + preds[1:2, :, ::-1, :]
-        + preds[1:2, ::-1, :, :]
-        + preds[2:3, :, :, :]  #
-        # + tf.transpose(preds[3:4], (0, 2, 1, 3))
+        preds[0:1, :, ::-1, :] + preds[1:2, ::-1, :, :] + preds[2:3, :, :, :]  #
     ) / preds.shape[0]
     pred1 = tf.reduce_max(
         tf.stack(
             [
-                # preds[:1],
                 preds[0:1, :, ::-1, :],
                 preds[1:2, ::-1, :, :],
                 preds[2:3, :, :, :],
@@ -501,13 +472,8 @@ def predict_tf(
         ),
         -1,
     )
-    t3 = time()
     pred = pred.numpy()
-    t4 = time()
-    # pred[..., 0] = (pred[..., 0] * 5 + pred1[..., 0]) / 6
     pred[..., 1] = (pred[..., 1] + pred1[..., 1]) / 2
-    t5 = time()
-    # print(pred)
     (
         pedestrian_centroid,
         pedestrian_confidence,
@@ -531,8 +497,6 @@ def predict_tf(
 
     pred_records.append(pred)
 
-    t6 = time()
-    # print(t1 - t0, t2 - t1, t3 - t2, t4 - t3, t5 - t4, t6 - t5)
     if summary:
         pred_summary_image = np.concatenate(
             [pred[0], np.zeros((1152, 1152, 1), np.float32)], -1

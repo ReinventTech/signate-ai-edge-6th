@@ -75,7 +75,7 @@ void preprocess(volatile float* lidar_points, volatile int* n_points, float z_of
             float intensity = lidar_points[3] * scale;
             intensities[0] = (int8_t)intensity + 1;
 
-            offsets[0] = y*(1024*LIDAR_IMAGE_DEPTH) + x*LIDAR_IMAGE_DEPTH + z;
+            offsets[0] = (y*1024 + x) * LIDAR_IMAGE_DEPTH + z;
             ++offsets;
 
             ++n_valid_points;
@@ -180,13 +180,15 @@ void refine_predictions(volatile float* preds, volatile int8_t* input_image, vol
     for(int i=0; i<*n_preds; ++i){
         int x = (int)centroids[i*2];
         int y = (int)centroids[i*2+1];
+        int ox = x;
+        int oy = y;
         bool has_points = false;
-        int sx = x>7? (x-7) : 0;
-        int sy = y>7? (y-7) : 0;
-        int ex = x<1024-7? (x+7) : (1024-1);
-        int ey = y<1024-7? (y+7) : (1024-1);
+        int sx = x>4? (x-4) : 0;
+        int sy = y>4? (y-4) : 0;
+        int ex = x<512-4? (x+4) : (512-1);
+        int ey = y<512-4? (y+4) : (512-1);
         for(int ry=sy; ry<ey; ++ry){
-            int offset = ry * 1024;
+            int offset = ry * 512;
             for(int rx=sx; rx<ex; ++rx){
                 if(input_image[offset+rx]>0){
                     has_points = true;
@@ -196,7 +198,7 @@ void refine_predictions(volatile float* preds, volatile int8_t* input_image, vol
             if(has_points) break;
         }
         if(has_points==0){
-            confidence[y*1024+x] *= 0.1f;
+            confidence[oy*1024+ox] *= 0.1f;
         }
     }
 
@@ -272,7 +274,7 @@ void refine_predictions(volatile float* preds, volatile int8_t* input_image, vol
 
 int main(void)
 {
-    REG(GPIO_BASE + 4) = 0; // 出力に設定
+    REG(GPIO_BASE + 4) = 0; // Set as output
 	REG(GPIO_BASE) = 0;
 
     volatile char* args = (volatile char*)(RISCV_ARGS_BUFFER + DMEM_BASE);
@@ -313,7 +315,7 @@ int main(void)
         );
     }
 
-	REG(GPIO_BASE) = 0x01; // 終了通知
+	REG(GPIO_BASE) = 0x01; // Termination notice
 	while(1) {}
 
 	return 0;

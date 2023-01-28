@@ -96,6 +96,8 @@ Assume that you have transferred the project directory to KV260 (/path/to/projec
 
 ```bash
 # On KV260
+sudo dnf install packagegroup-petalinux-vitisai-dev
+pip3 install numpy-quaternion opencv-python scipy
 cd /path/to/project_root/python/edge
 # Run make_meta.py on your host machine in advance and put generated JSON files under a new directory "/path/to/evaluation".
 python scripts/run.py --exec-path src --test-meta-path /path/to/evaluation/meta_data.json --test-data-dir /path/to/dataset/3d_labels --result-path /path/to/evaluation/result.json

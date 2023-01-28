@@ -17,10 +17,13 @@
 #include <mutex>
 #include <utility>
 #include <queue>
+#include <filesystem>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
 #include <poll.h>
+#include <fstream>
+#include <iostream>
 #include "common.h"
 typedef signed char i8;
 typedef unsigned char u8;
@@ -42,6 +45,7 @@ typedef unsigned long long u64;
 
 char* base_addr = 0;
 bool use_riscv = false;
+bool visualize = false;
 int last_preprocess_frame_idx = -1;
 int last_dpu_frame_idx = -1;
 int last_postprocess_frame_idx = -1;
@@ -210,7 +214,7 @@ void run_riscv(){
     REG(gpio) = 0x00; // Reset on
 }
 
-std::pair<i8*, i8*> riscv_preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale){
+std::pair<i8*, i8*> riscv_preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale, int frame_idx){
     mutex_riscv.lock();
     volatile float* riscv_lidar_points = (volatile float*)ralloc();
     u64* src = (u64*)lidar_points;
@@ -219,7 +223,6 @@ std::pair<i8*, i8*> riscv_preprocess(float* lidar_points, int n_points, float z_
     for(int i=n_points*5/2*2; i<n_points*5; ++i){
         riscv_lidar_points[i] = lidar_points[i];
     }
-    std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
     volatile char* riscv_args = (volatile char*)(dram + RISCV_ARGS_BUFFER);
     volatile unsigned int* func = (volatile unsigned int*)riscv_args;
     *func = FUNC_PREPROCESS;
@@ -239,23 +242,22 @@ std::pair<i8*, i8*> riscv_preprocess(float* lidar_points, int n_points, float z_
     volatile unsigned int* arg_intensities = (volatile unsigned int*)(riscv_args + 104);
     *arg_intensities = (long)riscv_intensities - (long)dram;
 
-    std::chrono::system_clock::time_point t2 = std::chrono::system_clock::now();
     run_riscv();
-    std::chrono::system_clock::time_point t3 = std::chrono::system_clock::now();
-    double d1 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count() / 1000.0);
-    //printf("riscv time[ms]: %lf\n", d1);
 
     n_points = *arg_n_points;
     mutex_lidar_image.lock();
     i8* lidar_image = (i8*)(base_addr + LIDAR_IMAGE_BUFFER);
+    i8* max_lidar_image = lidar_image + 1024*1024*24 + (frame_idx%4)*512*512;
     u64* tmp = (u64*)lidar_image;
     std::memset(tmp, 0, 1024*1024*24);
-    i8* max_lidar_image = (i8*)alloc();
     tmp = (u64*)max_lidar_image;
-    std::memset(tmp, 0, 1024*1024);
+    std::memset(tmp, 0, 512*512);
     for(int i=0; i<n_points; ++i){
         int offset = riscv_offsets[i];
         int max_offset = offset / LIDAR_IMAGE_DEPTH;
+        int y = max_offset / 1024;
+        int x = max_offset % 1024;
+        max_offset = (y/2) * 512 + x/2;
         i8 intensity0 = lidar_image[offset];
         i8 intensity1 = riscv_intensities[i];
         lidar_image[offset] = (intensity0>intensity1? intensity0 : intensity1);
@@ -270,9 +272,9 @@ std::pair<i8*, i8*> riscv_preprocess(float* lidar_points, int n_points, float z_
     return {lidar_image, max_lidar_image};
 }
 
-std::pair<i8*, i8*> preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale){
+std::pair<i8*, i8*> preprocess(float* lidar_points, int n_points, float z_offset, int input_quant_scale, int frame_idx){
     if(use_riscv){
-        return riscv_preprocess(lidar_points, n_points, z_offset, input_quant_scale);
+        return riscv_preprocess(lidar_points, n_points, z_offset, input_quant_scale, frame_idx);
     }
     int* lidar_xs = (int*)alloc();
     int* lidar_ys = (int*)alloc();
@@ -308,6 +310,7 @@ std::pair<i8*, i8*> preprocess(float* lidar_points, int n_points, float z_offset
     for(int i=0; i<n_valid_points; ++i){
         int max_offset = lidar_ys[i] * 1024 + lidar_xs[i];
         int offset = max_offset*LIDAR_IMAGE_DEPTH + lidar_zs[i];
+        max_offset /= 4;
         lidar_image[offset] = (lidar_image[offset]<intensities[i]? intensities[i] : lidar_image[offset]);
         max_lidar_image[max_offset] = (max_lidar_image[max_offset]<intensities[i]? intensities[i] : max_lidar_image[max_offset]);
     }
@@ -319,6 +322,7 @@ std::pair<i8*, i8*> preprocess(float* lidar_points, int n_points, float z_offset
 }
 
 const float sigmoid_table[256] = {1.2664165549094016e-14, 1.6261110446177924e-14, 2.08796791164589e-14, 2.6810038677817314e-14, 3.442477108469858e-14, 4.420228103640978e-14, 5.6756852326323996e-14, 7.287724095819161e-14, 9.357622968839299e-14, 1.2015425731770343e-13, 1.5428112031916497e-13, 1.9810087980485874e-13, 2.543665647376276e-13, 3.2661313427863805e-13, 4.193795658377786e-13, 5.384940217751136e-13, 6.914400106935423e-13, 8.878265478451776e-13, 1.1399918530430558e-12, 1.4637785141237662e-12, 1.8795288165355508e-12, 2.4133627718273897e-12, 3.0988191387122225e-12, 3.978962535821408e-12, 5.109089028037221e-12, 6.560200168110743e-12, 8.423463754397692e-12, 1.0815941557168708e-11, 1.3887943864771144e-11, 1.7832472907828393e-11, 2.289734845593124e-11, 2.940077739198032e-11, 3.7751345441365816e-11, 4.847368706035286e-11, 6.224144622520383e-11, 7.991959892315218e-11, 1.0261879630648827e-10, 1.3176514268359263e-10, 1.6918979223288784e-10, 2.1724399346070674e-10, 2.7894680920908113e-10, 3.581747929000289e-10, 4.599055376537186e-10, 5.905303995456778e-10, 7.582560422162385e-10, 9.736200303530205e-10, 1.2501528648238605e-09, 1.6052280526088547e-09, 2.0611536181902037e-09, 2.646573631904765e-09, 3.398267807946847e-09, 4.363462233903898e-09, 5.602796406145941e-09, 7.194132978569834e-09, 9.23744957664012e-09, 1.1861120010657661e-08, 1.522997951276035e-08, 1.955568070542584e-08, 2.5109990926928157e-08, 3.2241866333029355e-08, 4.1399375473943306e-08, 5.3157849718487075e-08, 6.825602910446286e-08, 8.764247451323235e-08, 1.12535162055095e-07, 1.4449800373124837e-07, 1.8553910183683314e-07, 2.38236909993343e-07, 3.059022269256247e-07, 3.927862002670442e-07, 5.043474082014517e-07, 6.475947982049267e-07, 8.315280276641321e-07, 1.067702870044147e-06, 1.3709572068578448e-06, 1.7603432133424856e-06, 2.2603242979035746e-06, 2.902311985211097e-06, 3.726639284186561e-06, 4.785094494890119e-06, 6.144174602214718e-06, 7.889262586245034e-06, 1.0129990980873921e-05, 1.3007128466476033e-05, 1.670142184809518e-05, 2.144494842091395e-05, 2.7535691114583473e-05, 3.5356250741744315e-05, 4.5397868702434395e-05, 5.829126566113865e-05, 7.484622751061123e-05, 9.610241549947396e-05, 0.00012339457598623172, 0.00015843621910252592, 0.00020342697805520653, 0.0002611903190957194, 0.0003353501304664781, 0.0004305570813246149, 0.0005527786369235996, 0.0007096703991005881, 0.0009110511944006454, 0.0011695102650555148, 0.0015011822567369917, 0.0019267346633274757, 0.0024726231566347743, 0.0031726828424851893, 0.004070137715896128, 0.005220125693558397, 0.0066928509242848554, 0.008577485413711984, 0.01098694263059318, 0.014063627043245475, 0.01798620996209156, 0.022977369910025615, 0.02931223075135632, 0.03732688734412946, 0.04742587317756678, 0.060086650174007626, 0.07585818002124355, 0.09534946489910949, 0.11920292202211755, 0.14804719803168948, 0.18242552380635635, 0.22270013882530884, 0.2689414213699951, 0.320821300824607, 0.3775406687981454, 0.43782349911420193, 0.5, 0.5621765008857981, 0.6224593312018546, 0.679178699175393, 0.7310585786300049, 0.7772998611746911, 0.8175744761936437, 0.8519528019683106, 0.8807970779778823, 0.9046505351008906, 0.9241418199787566, 0.9399133498259924, 0.9525741268224334, 0.9626731126558706, 0.9706877692486436, 0.9770226300899744, 0.9820137900379085, 0.9859363729567544, 0.9890130573694068, 0.991422514586288, 0.9933071490757153, 0.9947798743064417, 0.995929862284104, 0.9968273171575148, 0.9975273768433653, 0.9980732653366725, 0.998498817743263, 0.9988304897349445, 0.9990889488055994, 0.9992903296008995, 0.9994472213630764, 0.9995694429186754, 0.9996646498695336, 0.9997388096809043, 0.9997965730219448, 0.9998415637808975, 0.9998766054240137, 0.9999038975845005, 0.9999251537724895, 0.9999417087343389, 0.9999546021312976, 0.9999646437492582, 0.9999724643088853, 0.9999785550515792, 0.999983298578152, 0.9999869928715335, 0.9999898700090192, 0.9999921107374138, 0.9999938558253978, 0.9999952149055051, 0.9999962733607158, 0.9999970976880148, 0.999997739675702, 0.9999982396567868, 0.999998629042793, 0.9999989322971299, 0.9999991684719722, 0.9999993524052017, 0.9999994956525918, 0.9999996072137998, 0.999999694097773, 0.9999997617630899, 0.9999998144608981, 0.9999998555019962, 0.9999998874648379, 0.9999999123575255, 0.999999931743971, 0.9999999468421502, 0.9999999586006244, 0.9999999677581336, 0.999999974890009, 0.9999999804443193, 0.9999999847700205, 0.99999998813888, 0.9999999907625504, 0.9999999928058669, 0.9999999943972036, 0.9999999956365377, 0.9999999966017321, 0.9999999973534264, 0.9999999979388463, 0.999999998394772, 0.9999999987498471, 0.9999999990263799, 0.9999999992417439, 0.9999999994094697, 0.9999999995400946, 0.9999999996418252, 0.9999999997210531, 0.999999999782756, 0.9999999998308102, 0.999999999868235, 0.9999999998973812, 0.9999999999200804, 0.9999999999377585, 0.9999999999515263, 0.9999999999622486, 0.9999999999705993, 0.9999999999771028, 0.9999999999821676, 0.999999999986112, 0.999999999989184, 0.9999999999915765, 0.9999999999934397, 0.999999999994891, 0.999999999996021, 0.9999999999969011, 0.9999999999975866, 0.9999999999981204, 0.9999999999985363, 0.99999999999886, 0.9999999999991123, 0.9999999999993086, 0.9999999999994615, 0.9999999999995806, 0.9999999999996734, 0.9999999999997455, 0.9999999999998019, 0.9999999999998457, 0.9999999999998799, 0.9999999999999065, 0.9999999999999272, 0.9999999999999432, 0.9999999999999558, 0.9999999999999656, 0.9999999999999731, 0.9999999999999791, 0.9999999999999838};
+
 
 void quaternion_to_matrix(float qt[4], float matrix[3][3]){
     float qt0_2 = qt[0] * qt[0];
@@ -677,15 +681,17 @@ void refine_predictions(float* preds, i8* input_image, float* centroids, float* 
     }
 
     for(int i=0; i<*n_preds; ++i){
-        int x = (int)(centroids[i*2]+0.5);
-        int y = (int)(centroids[i*2+1]+0.5);
+        int x = (int)(centroids[i*2]+0.5) / 2;
+        int y = (int)(centroids[i*2+1]+0.5) / 2;
+        int ox = x;
+        int oy = y;
         bool has_points = false;
-        int sx = x>7? (x-7) : 0;
-        int sy = y>7? (y-7) : 0;
-        int ex = x<1024-7? (x+7) : (1024-1);
-        int ey = y<1024-7? (y+7) : (1024-1);
+        int sx = x>4? (x-4) : 0;
+        int sy = y>4? (y-4) : 0;
+        int ex = x<512-4? (x+4) : (512-1);
+        int ey = y<512-4? (y+4) : (512-1);
         for(int ry=sy; ry<ey; ++ry){
-            int offset = ry * 1024;
+            int offset = ry * 512;
             for(int rx=sx; rx<ex; ++rx){
                 if(input_image[offset+rx]>0){
                     has_points = true;
@@ -695,7 +701,7 @@ void refine_predictions(float* preds, i8* input_image, float* centroids, float* 
             if(has_points) break;
         }
         if(!has_points){
-            confidence[y*(1024)+x] *= 0.1;
+            confidence[oy*(1024)+ox] *= 0.1;
         }
     }
 
@@ -901,9 +907,9 @@ void update_records(int frame_idx, u8* pedestrian_pred, u8* vehicle_pred, float 
 }
 
 
-void predict(float* lidar_points, int n_points, int input_quant_scale, int output_quant_scale, float ego_translation[3], float ego_rotation[4], float* pedestrian_preds, float* vehicle_preds, int* n_pedestrians, int* n_vehicles, vart::Runner* runner, int frame_idx, u8* pred_records, float* ego_records, std::string frame_id){
+i8* predict(float* lidar_points, int n_points, int input_quant_scale, int output_quant_scale, float ego_translation[3], float ego_rotation[4], float* pedestrian_preds, float* vehicle_preds, int* n_pedestrians, int* n_vehicles, vart::Runner* runner, int frame_idx, u8* pred_records, float* ego_records, std::string frame_id){
     std::chrono::system_clock::time_point t0 = std::chrono::system_clock::now();
-    auto [input_image, max_input_image] = preprocess(lidar_points, n_points, 3.7, input_quant_scale);
+    auto [input_image, max_input_image] = preprocess(lidar_points, n_points, 3.7, input_quant_scale, frame_idx);
     std::chrono::system_clock::time_point t1 = std::chrono::system_clock::now();
     last_preprocess_frame_idx = frame_idx;
 
@@ -916,9 +922,9 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
     std::chrono::system_clock::time_point t2 = std::chrono::system_clock::now();
     last_dpu_frame_idx = frame_idx;
 
-    //while(last_postprocess_frame_idx<frame_idx-1){
-        //std::this_thread::sleep_for(std::chrono::microseconds(100));
-    //}
+    while(last_postprocess_frame_idx<frame_idx-1){
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
     u8* quant_pedestrian_pred = (u8*)alloc();
     u8* quant_vehicle_pred = quant_pedestrian_pred + 1024*1024;
     u8* src = (u8*)quant_pred;
@@ -935,13 +941,10 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
     }
     mfree(quant_pred);
 
-    std::chrono::system_clock::time_point t3 = std::chrono::system_clock::now();
-
     if(frame_idx>=2){
         merge_prev_preds(quant_pedestrian_pred, ego_translation, ego_rotation, frame_idx, pred_records, ego_records, 0);
         merge_prev_preds(quant_vehicle_pred, ego_translation, ego_rotation, frame_idx, pred_records, ego_records, 1);
     }
-    std::chrono::system_clock::time_point t4 = std::chrono::system_clock::now();
 
     float* pedestrian_centroids = (float*)alloc();
     float* pedestrian_confidence = pedestrian_centroids + 1024*1024/2;
@@ -949,36 +952,33 @@ void predict(float* lidar_points, int n_points, int input_quant_scale, int outpu
     float* vehicle_confidence = vehicle_centroids + 1024*1024/2;
 
     postprocess(quant_pedestrian_pred, quant_vehicle_pred, pedestrian_centroids, pedestrian_confidence, n_pedestrians, vehicle_centroids, vehicle_confidence, n_vehicles, frame_idx, pred_records, ego_records);
-    std::chrono::system_clock::time_point t5 = std::chrono::system_clock::now();
 
     update_records(frame_idx, quant_pedestrian_pred, quant_vehicle_pred, ego_translation, ego_rotation, pred_records, ego_records);
     mfree(quant_pedestrian_pred);
 
-    //last_postprocess_frame_idx = frame_idx;
+    std::chrono::system_clock::time_point t3 = std::chrono::system_clock::now();
+    last_postprocess_frame_idx = frame_idx;
 
 
-    //while(last_refine_frame_idx<frame_idx-1){
-        //std::this_thread::sleep_for(std::chrono::microseconds(100));
-    //}
+    while(last_refine_frame_idx<frame_idx-1){
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
     refine_predictions(pedestrian_preds, max_input_image, pedestrian_centroids, pedestrian_confidence, n_pedestrians, ego_translation, ego_rotation, 40, 39, 0.95, 0.8, 55, true);
     refine_predictions(vehicle_preds, max_input_image, vehicle_centroids, vehicle_confidence, n_vehicles, ego_translation, ego_rotation, 50, 49.5, 0.9, 2.2, 60, false);
     mfree(pedestrian_centroids);
-    mfree(max_input_image);
-    std::chrono::system_clock::time_point t6 = std::chrono::system_clock::now();
+    std::chrono::system_clock::time_point t4 = std::chrono::system_clock::now();
 
     double d0 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count() / 1000.0);
     double d1 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count() / 1000.0);
     double d2 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t3 - t2).count() / 1000.0);
     double d3 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t4 - t3).count() / 1000.0);
-    double d4 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t5 - t4).count() / 1000.0);
-    double d5 = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t6 - t5).count() / 1000.0);
-    double d_total = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t6 - t0).count() / 1000.0);
-    printf("#%s time[ms] total:%lf preproc:%lf dpu:%lf crop:%lf affine:%lf postproc:%lf refine:%lf\n", frame_id.c_str(), d_total, d0, d1, d2, d3, d4, d5);
-    //last_refine_frame_idx = frame_idx;
+    double d_total = (double)(std::chrono::duration_cast<std::chrono::microseconds>(t4 - t0).count() / 1000.0);
+    std::cerr << "#" << frame_id << " Latency[ms] total:" << d_total << " preproc:" << d0 << " dpu:" << d1 << " cca:" << d2 << " refine:" << d3 << std::endl;
+    last_refine_frame_idx = frame_idx;
+    return max_input_image;
 }
 
 void predict_scene(char* output_path, char* xmodel_path){
-    printf("start scene\n");
     int frame_idx = 0;
     char* records = (char*)(base_addr + RECORD_BUFFER);
     u8* pred_records = (u8*)records;
@@ -1021,7 +1021,103 @@ void predict_scene(char* output_path, char* xmodel_path){
             int n_vehicles = 0;
             float ego_trans[3] = {ego_tx, ego_ty, ego_tz};
             float ego_rot[4] = {ego_rw, ego_rx, ego_ry, ego_rz};
-            predict(lidar_points, n_points, input_quant_scale, output_quant_scale, ego_trans, ego_rot, pedestrian_preds, vehicle_preds, &n_pedestrians, &n_vehicles, runner.get(), frame_idx, pred_records, ego_records, frame_id);
+            u8* lidar_image = (u8*)predict(lidar_points, n_points, input_quant_scale, output_quant_scale, ego_trans, ego_rot, pedestrian_preds, vehicle_preds, &n_pedestrians, &n_vehicles, runner.get(), frame_idx, pred_records, ego_records, frame_id);
+            if(visualize){
+                u8* summary_image = (u8*)malloc(512*512*3);
+                std::memset(summary_image+512*512, 128, 512*512*2);
+                for(int y=0; y<512; ++y){
+                    for(int x=0; x<512; ++x){
+                        u8 p = lidar_image[512*y+x];
+                        summary_image[y*512+x] = p*3;
+                    }
+                }
+                float mx3[3][3] = {};
+                float qt[4];
+                inverse_quaternion(ego_rotation, qt);
+                quaternion_to_matrix(qt, mx3);
+                float mx[2][2] = {{mx3[0][0], mx3[0][1]}, {mx3[1][0], mx3[1][1]}};
+                for(int i=0; i<n_vehicles; ++i){
+                    float gxy[2] = {vehicle_preds[i*3], vehicle_preds[i*3+1]};
+                    float gs = vehicle_preds[i*3+2];
+                    float rxy[2];
+                    gxy[0] -= ego_translation[0];
+                    gxy[1] -= ego_translation[1];
+                    rotate_2d(gxy, rxy, mx);
+                    rxy[0] = (rxy[0] + 51.2f) * 10.0f;
+                    rxy[1] = (-rxy[1] + 51.2f) * 10.0f;
+                    int xy[2] = {
+                        std::max(0, std::min(511, (int)rxy[0]/2)),
+                        std::max(0, std::min(511, (int)rxy[1]/2)),
+                    };
+                    if(xy[0]>0 && xy[0]<511 && xy[1]>0 && xy[1]<511){
+                        int s = std::min((int)(gs*gs*65535.0f)/256, 255);
+                        for(int y = std::max(xy[1]-4, 0); y<=std::min(xy[1]+4, 511); ++y){
+                            for(int x=std::max(xy[0]-4, 0); x<=std::min(xy[0]+4, 511); ++x){
+                                summary_image[y*512+x] = 210*s / 256;
+                            }
+                        }
+                        for(int y = std::max(xy[1]-4, 0); y<=std::min(xy[1]+4, 511); ++y){
+                            for(int x=std::max(xy[0]-4, 0); x<=std::min(xy[0]+4, 511); ++x){
+                                summary_image[512*512+y*512+x] = (16-128)*s/256 + 128;
+                            }
+                        }
+                        for(int y = std::max(xy[1]-4, 0); y<=std::min(xy[1]+4, 511); ++y){
+                            for(int x=std::max(xy[0]-4, 0); x<=std::min(xy[0]+4, 511); ++x){
+                                summary_image[2*512*512+y*512+x] = (146-128)*s/256 + 128;
+                            }
+                        }
+                    }
+                }
+                for(int i=0; i<n_pedestrians; ++i){
+                    float gxy[2] = {pedestrian_preds[i*3], pedestrian_preds[i*3+1]};
+                    float gs = pedestrian_preds[i*3+2];
+                    float rxy[2];
+                    gxy[0] -= ego_translation[0];
+                    gxy[1] -= ego_translation[1];
+                    rotate_2d(gxy, rxy, mx);
+                    rxy[0] = (rxy[0] + 51.2f) * 10.0f;
+                    rxy[1] = (-rxy[1] + 51.2f) * 10.0f;
+                    int xy[2] = {
+                        std::max(0, std::min(511, (int)rxy[0]/2)),
+                        std::max(0, std::min(511, (int)rxy[1]/2)),
+                    };
+                    if(xy[0]>0 && xy[0]<511 && xy[1]>0 && xy[1]<511){
+                        int s = std::min((int)(gs*512.0f), 255);
+                        for(int y = std::max(xy[1]-2, 0); y<=std::min(xy[1]+2, 511); ++y){
+                            for(int x=std::max(xy[0]-2, 0); x<=std::min(xy[0]+2, 511); ++x){
+                                summary_image[y*512+x] = 106*s / 256;
+                            }
+                        }
+                        for(int y = std::max(xy[1]-2, 0); y<=std::min(xy[1]+2, 511); ++y){
+                            for(int x=std::max(xy[0]-2, 0); x<=std::min(xy[0]+2, 511); ++x){
+                                summary_image[512*512+y*512+x] = (203-128)*s/256 + 128;
+                            }
+                        }
+                        for(int y = std::max(xy[1]-2, 0); y<=std::min(xy[1]+2, 511); ++y){
+                            for(int x=std::max(xy[0]-2, 0); x<=std::min(xy[0]+2, 511); ++x){
+                                summary_image[2*512*512+y*512+x] = (63-128)*s/256 + 128;
+                            }
+                        }
+                    }
+                }
+                for(int y = 256-4; y<=256+4; ++y){
+                    for(int x=256-4; x<=256+4; ++x){
+                        summary_image[y*512+x] = 114;
+                    }
+                }
+                for(int y = 256-4; y<=256+4; ++y){
+                    for(int x=256-4; x<=256+4; ++x){
+                        summary_image[512*512+y*512+x] = 72;
+                    }
+                }
+                for(int y = 256-4; y<=256+4; ++y){
+                    for(int x=256-4; x<=256+4; ++x){
+                        summary_image[2*512*512+y*512+x] = 216;
+                    }
+                }
+                std::cout.write((const char*)summary_image, 512*512*3);
+                free(summary_image);
+            }
             while(last_write_frame_idx<frame_idx-1){
                 std::this_thread::sleep_for(std::chrono::microseconds(100));
             }
@@ -1082,6 +1178,7 @@ void predict_scene(char* output_path, char* xmodel_path){
 
 int main(int argc, char* argv[]){
     use_riscv = (strcmp(argv[3], "1") == 0);
+    visualize = (strcmp(argv[4], "1") == 0);
     void* heap = 0;
     int ddr_fd = 0;
     if(use_riscv){

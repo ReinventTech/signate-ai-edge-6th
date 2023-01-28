@@ -1,13 +1,13 @@
 import os
 import dataset
+import argparse
+import numpy as np
+from bev_model import DetectorTrainer, get_base_detector_layers
 
 os.environ["TF_GPU_THREAD_MODE"] = "gpu_private"
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices"
 import tensorflow as tf
-import numpy as np
-import argparse
 import tensorflow_addons as tfa
-from bev_model import DetectorTrainer, get_base_detector_layers
 
 TRAIN_BATCH_SIZE = 64
 TEST_BATCH_SIZE = 8
@@ -199,9 +199,6 @@ def preprocess(frames, dataset_dir, training=True):
     return lidar_bbs, bbs
 
 
-# TODO 40m/50m filter by euclid dist
-
-
 @tf.function
 def train_preprocess(frame, dataset_dir):
     return preprocess(frame, dataset_dir, True)
@@ -366,7 +363,7 @@ def main():
     )
     detector.fit(
         train_ds,
-        epochs=300,
+        epochs=200,
         callbacks=[tb_callback, ckpt_callback, best_ckpt_callback, train_ckpt_callback],
         validation_data=test_ds,
         validation_freq=1,

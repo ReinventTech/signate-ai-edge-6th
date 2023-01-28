@@ -6,7 +6,6 @@ from visualizer import visualize_predictions
 from numba import njit
 
 # import pp_predictor
-from time import time
 
 
 @njit
@@ -121,7 +120,6 @@ class ScoringService(object):
 
         """
         # load sample
-        t0 = time()
         lidar = np.fromfile(input["lidar_path"], dtype=np.float32).reshape((-1, 5))
         cam_ego_pose = input["cam_ego_pose"]
 
@@ -134,7 +132,6 @@ class ScoringService(object):
         cam_calib = input["cam_calibration"]
         lidar_calib = input["lidar_calibration"]
 
-        t1 = time()
         # make prediction
         summary = False
         bev_pedestrian_preds, bev_vehicle_preds, summary_image = bev_predictor.predict(
@@ -149,7 +146,6 @@ class ScoringService(object):
         )
         cls.ego_pose_records = cls.ego_pose_records[-2:]
         cls.pred_records = cls.pred_records[-2:]
-        t2 = time()
         cam_ego_txy = np.array(cam_ego_pose["translation"])[:2]
 
         pedestrian_preds, vehicle_preds = sort_predictions(
@@ -167,8 +163,6 @@ class ScoringService(object):
         # if cls.count % 10 == 0:
         # print(cls.count, len(pedestrian_preds), len(vehicle_preds))
         cls.count += 1
-        t3 = time()
-        # print("root", t1 - t0, t2 - t1, t3 - t2)
 
         if summary:
             import cv2
