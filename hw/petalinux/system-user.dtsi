@@ -1,0 +1,22 @@
+/include/ "system-conf.dtsi"
+/ {
+    chosen {
+        bootargs = "earlycon console=ttyPS1,115200 clk_ignore_unused init_fatal_sh=1 cma=900M ";
+        stdout-path = "serial1:115200n8";
+    };
+        
+    reserved-memory {
+        #address-cells = <2>;
+        #size-cells = <2>;
+        ranges;
+        reserved: buffer@0 {
+          no-map;
+          reg = <0x0 0x10000000 0x0 0x10000000>;
+        };
+    };
+     
+    reserved-driver@0 {
+        compatible = "xlnx,reserved-memory";
+        memory-region = <&reserved>;
+    };
+};
