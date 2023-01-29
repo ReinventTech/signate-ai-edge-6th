@@ -277,9 +277,9 @@ std::pair<i8*, i8*> preprocess(float* lidar_points, int n_points, float z_offset
         return riscv_preprocess(lidar_points, n_points, z_offset, input_quant_scale, frame_idx);
     }
     int* lidar_xs = (int*)alloc();
-    int* lidar_ys = (int*)alloc();
-    int* lidar_zs = (int*)alloc();
-    i8* intensities = (i8*)alloc();
+    int* lidar_ys = lidar_xs + 1024*1024/2;
+    int* lidar_zs = lidar_ys + 1024*1024/2;
+    i8* intensities = (i8*)(lidar_zs + 1024*1024/2);
     int offset = 0;
     int n_valid_points = 0;
     float scale = (float)(1 << input_quant_scale);
@@ -304,7 +304,7 @@ std::pair<i8*, i8*> preprocess(float* lidar_points, int n_points, float z_offset
     i8* lidar_image = (i8*)(base_addr + LIDAR_IMAGE_BUFFER);
     u64* tmp = (u64*)lidar_image;
     std::memset(tmp, 0, 1024*1024*LIDAR_IMAGE_DEPTH);
-    i8* max_lidar_image = (i8*)alloc();
+    i8* max_lidar_image = lidar_image + 1024*1024*24 + (frame_idx%4)*512*512;
     tmp = (u64*)max_lidar_image;
     std::memset(tmp, 0, 1024*1024);
     for(int i=0; i<n_valid_points; ++i){
@@ -315,9 +315,6 @@ std::pair<i8*, i8*> preprocess(float* lidar_points, int n_points, float z_offset
         max_lidar_image[max_offset] = (max_lidar_image[max_offset]<intensities[i]? intensities[i] : max_lidar_image[max_offset]);
     }
     mfree(lidar_xs);
-    mfree(lidar_ys);
-    mfree(lidar_zs);
-    mfree(intensities);
     return {lidar_image, max_lidar_image};
 }
 
